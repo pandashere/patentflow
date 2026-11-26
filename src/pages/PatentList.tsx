@@ -8,15 +8,15 @@ import { Plus, Search } from 'lucide-react'
 
 type Scope = 'mine' | 'team' | 'all' | 'archived'
 
-export default function PatentList({ navigate }: { navigate: (p: Page) => void }) {
+export default function PatentList({ navigate, initialStage }: { navigate: (p: Page) => void; initialStage?: StageKey }) {
   const { me, visiblePatents, createPatent, userById, prefs } = useStore()
-  const [scope, setScope] = useState<Scope>(me.role === 'user' ? 'mine' : 'all')
-  const [stage, setStage] = useState<StageKey | ''>('')
+  const [scope, setScope] = useState<Scope>(initialStage ? 'all' : me.role === 'user' ? 'mine' : 'all')
+  const [stage, setStage] = useState<StageKey | ''>(initialStage ?? '')
   const [vis, setVis] = useState<Visibility | ''>('')
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const [newTitle, setNewTitle] = useState('')
-  const [newVis, setNewVis] = useState<Visibility>('private')
+  const [newVis, setNewVis] = useState<Visibility>(prefs.defaultVisibility)
 
   const visible = visiblePatents()
 
@@ -48,6 +48,7 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
   return (
     <div className="mx-auto max-w-6xl">
       <SectionTitle
+        page
         en="PATENTS"
         zh="专利库"
         right={
@@ -173,7 +174,7 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
             aria-modal="true"
           >
             <h3 className="font-bold">新建专利草案</h3>
-            <p className="mt-1 text-xs text-muted-foreground">创建后进入「草案」阶段,默认仅自己可见。</p>
+            <p className="mt-1 text-xs text-muted-foreground">创建后进入「草案」阶段。默认可见性可在个人中心修改。</p>
             <label className="mt-4 block">
               <span className="ui-label text-slate-500">标题</span>
               <input
@@ -201,6 +202,13 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
                   </button>
                 ))}
               </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                {newVis === 'private'
+                  ? '私有:只有你自己可见,不进入任何统计;但只能停留在草案阶段,提交审查前需改为团队/公开,且之后不能再改回私有。'
+                  : newVis === 'team'
+                    ? '团队可见:本组成员、本组 PL 与 GL 可见。'
+                    : '公开:全员只读可见。'}
+              </p>
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setCreating(false)} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">

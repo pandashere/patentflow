@@ -44,12 +44,37 @@ export default function Login() {
             五阶段状态跟踪、可专利性同行审查、阶段级数据版本与可配置 KPI ——
             为几十人研发团队设计的轻量化内网服务。
           </p>
-          <div className="mt-8 flex gap-6 font-mono-x text-[11px] tracking-widest text-[#6b7386]">
-            <span>01 DRAFT</span>
-            <span>02 REVIEW</span>
-            <span>03 IMPL</span>
-            <span>04 SEARCH</span>
-            <span>05 DOI</span>
+          {/* 五阶段流水线示意 */}
+          <div className="mt-10 max-w-md">
+            <div className="relative grid grid-cols-5">
+              <div className="absolute left-[10%] right-[10%] top-4 h-px bg-gradient-to-r from-slate-500 via-teal-500 to-violet-500 opacity-60" />
+              {([
+                ['草案', '#94a3b8', '想法成稿'],
+                ['审查', '#14b8a6', 'reviewer 门禁'],
+                ['实施', '#3b82f6', '方案落地'],
+                ['检索', '#f59e0b', '新颖性检索'],
+                ['DOI', '#8b5cf6', '成果撰写'],
+              ] as const).map(([label, c, desc], i) => (
+                <div key={label} className="relative flex flex-col items-center text-center">
+                  <span
+                    className="flex size-8 items-center justify-center rounded-full border-2 bg-[#12141f] font-mono-x text-[11px] font-bold"
+                    style={{ borderColor: c, color: c, boxShadow: i === 1 ? `0 0 0 5px ${c}26` : undefined }}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="mt-2 text-xs font-medium text-white">{label}</span>
+                  <span className="mt-0.5 text-[10px] leading-tight text-[#6b7386]">{desc}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 grid grid-cols-3 gap-2 text-[11px]">
+              {[['版本只增不改', '每次保存一个快照'], ['审查按轮次', '打回后修改再审'], ['KPI 事件口径', '首次到达才计分']].map(([t, d]) => (
+                <div key={t} className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
+                  <div className="font-medium text-slate-200">{t}</div>
+                  <div className="mt-0.5 text-[#6b7386]">{d}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
         <div className="font-mono-x text-[10px] tracking-widest text-[#565f75]">

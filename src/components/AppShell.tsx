@@ -8,7 +8,7 @@ import {
 
 export type Page =
   | { name: 'dashboard' }
-  | { name: 'patents' }
+  | { name: 'patents'; stage?: import('@/lib/types').StageKey }
   | { name: 'patent'; id: string }
   | { name: 'kpi' }
   | { name: 'admin' }
@@ -37,11 +37,15 @@ export function AppShell({
   navigate: (p: Page) => void
   children: ReactNode
 }) {
-  const { me, persona, setPersona, notifications, markAllRead, setLoggedIn, prefs } = useStore()
+  const { me, persona, setPersona, notifications, markAllRead, setLoggedIn, prefs, visiblePatents } = useStore()
   const [notifOpen, setNotifOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
   // 个人通知偏好(U3):被关掉的事件不进入通知流
-  const myNotifications = notifications.filter((n) => prefs.notifyEvents[n.event] !== false)
+  // 只投递与我可见专利相关的通知:私有专利的事件不会发给 PL/GL(决策 9)
+  const visibleIds = new Set(visiblePatents().map((p) => p.id))
+  const myNotifications = notifications.filter(
+    (n) => prefs.notifyEvents[n.event] !== false && (!n.patentId || visibleIds.has(n.patentId)),
+  )
   const unread = myNotifications.filter((n) => !n.read).length
 
   return (
@@ -74,9 +78,6 @@ export function AppShell({
               >
                 <n.icon className={cn('size-4', active && 'text-teal-400')} />
                 <span className="flex-1">{n.label}</span>
-                <span className={cn('font-mono-x text-[9px] tracking-widest', active ? 'text-teal-400' : 'text-[#565f75]')}>
-                  {n.en}
-                </span>
               </button>
             )
           })}

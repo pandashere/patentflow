@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
-import { computeKpi, teamName, useStore } from '@/lib/store'
+import { computeKpi, firstReach, teamName, today, useStore } from '@/lib/store'
 import { TEAMS } from '@/lib/data'
-import { STAGES, stageLabel, type KpiRule, type StageKey } from '@/lib/types'
+import { STAGES, stageLabel, type KpiRule, type KpiScoring, type StageKey } from '@/lib/types'
 import { SectionTitle, StagePill } from '@/components/pf'
 import { Check, Code2, Pause, Pencil, Play, Plus, X } from 'lucide-react'
 
@@ -20,8 +20,9 @@ export default function Kpi() {
   })
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-6xl">
       <SectionTitle
+        page
         en="KPI RULES"
         zh="KPI 管理"
         right={
@@ -35,6 +36,7 @@ export default function Kpi() {
                   scope: { type: me.role === 'gl' ? 'global' : 'team', teamId: me.role === 'pl' ? me.teamId : undefined },
                   cycleId: defaultCycleId,
                   targets: [{ stage: 'patentability', deadline: '2026-12-31' }],
+                  scoring: { mode: 'ratio' },
                   scorerHook: null,
                   enabled: true,
                   updatedAt: '',
@@ -50,6 +52,9 @@ export default function Kpi() {
         }
       />
 
+      <MyContribution />
+
+      <h2 className="mb-3 mt-8 text-base font-semibold tracking-tight">全部规则</h2>
       <div className="space-y-4">
         {myRules.map((r) => {
           const rc = cycles.find((c) => c.id === r.cycleId)
@@ -86,12 +91,15 @@ export default function Kpi() {
                     <span>
                       目标:{r.targets.map((t) => `${stageLabel(t.stage)} @ ${t.deadline}`).join(' + ')}
                     </span>
+                    <span>计分:{scoringLabel(r.scoring)}</span>
                     {r.updatedAt && <span>更新于 {r.updatedAt}</span>}
                   </div>
                 </div>
                 <div className="text-right">
                   <div className={cn('font-mono-x text-2xl font-bold', r.enabled ? 'text-teal-700' : 'text-slate-400')}>{pct}%</div>
-                  <div className="text-[10px] text-muted-foreground">平均达成率</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {r.scoring.mode === 'tiered' ? `达成 ${'fullyAchieved' in report ? report.fullyAchieved : report.items.filter((i) => i.score === 1).length} 件 · 档位得分` : '平均达成率'}
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   {canManage && (
@@ -169,7 +177,8 @@ export default function Kpi() {
                     {frozen
                       ? '该周期已收口,以上数字为收口时刻的冻结快照,不再随后续流转变化。'
                       : '事件口径:统计周期窗口内「到达过」目标阶段的流转事件,与专利创建时间无关;跨周期项目各记各的、无双计。'}
-                    默认评分器:得分 = 已达成目标数 / 目标总数。配置 scorerHook 后由你的回调计算 —— 对应后端 KPI 引擎的 compute_item / compute_kpi 两个回调点。
+                    只认「首次推进到达」事件:回退、归档、恢复归档都不计;私有专利不进入统计。
+                    计分方式:{scoringLabel(r.scoring)}。配置 scorerHook 后改由回调 compute_item / compute_kpi 计算。
                   </p>
                 </div>
               )}
@@ -323,12 +332,14 @@ function KpiEditor({
             )}
           </div>
 
+          <ScoringEditor scoring={form.scoring} onChange={(scoring) => setForm({ ...form, scoring })} />
+
           <div>
             <label className="ui-label text-slate-500">自定义评分回调(可选)</label>
             <input
               value={form.scorerHook ?? ''}
               onChange={(e) => setForm({ ...form, scorerHook: e.target.value || null })}
-              placeholder="如:custom_scorer.py:weighted_score(留空 = 默认按比例给分)"
+              placeholder="如:custom_scorer.py:weighted_score(留空 = 使用上面的计分方式)"
               className="mt-1.5 w-full rounded-md border px-3 py-2 font-mono-x text-xs outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20"
             />
           </div>
@@ -355,5 +366,149 @@ function KpiEditor({
         </div>
       </div>
     </div>
+  )
+}
+
+function scoringLabel(sc: KpiScoring) {
+  if (sc.mode === 'ratio') return '按比例(达成目标数 / 目标总数,取均值)'
+  const tiers = [...sc.tiers].sort((a, b) => b.minCount - a.minCount)
+  return `分段阈值(${tiers.map((t) => `≥${t.minCount} 件 → ${Math.round(t.score * 100)}%`).join(',')},否则 ${Math.round(sc.elseScore * 100)}%)`
+}
+
+function ScoringEditor({ scoring, onChange }: { scoring: KpiScoring; onChange: (s: KpiScoring) => void }) {
+  const tiered = scoring.mode === 'tiered' ? scoring : null
+  const numCls = 'w-16 rounded-md border px-2 py-1.5 text-center font-mono-x text-sm outline-none focus:border-teal-600'
+  return (
+    <div>
+      <label className="ui-label text-slate-500">计分方式</label>
+      <div className="mt-1.5 flex gap-2">
+        {([
+          ['ratio', '按比例', '每件专利按达成目标比例得分,取平均'],
+          ['tiered', '分段阈值', '「全部目标达成」的件数落档,如 ≥8 件 100%'],
+        ] as const).map(([m, label, desc]) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onChange(m === 'ratio' ? { mode: 'ratio' } : { mode: 'tiered', tiers: [{ minCount: 5, score: 1 }, { minCount: 3, score: 0.6 }], elseScore: 0 })}
+            className={cn(
+              'flex-1 rounded-md border px-3 py-2 text-left transition-colors',
+              scoring.mode === m ? 'border-[#12141f] bg-[#12141f] text-white' : 'text-slate-600 hover:bg-slate-50',
+            )}
+          >
+            <span className="block text-[13px] font-medium">{label}</span>
+            <span className={cn('block text-[11px]', scoring.mode === m ? 'text-slate-300' : 'text-slate-400')}>{desc}</span>
+          </button>
+        ))}
+      </div>
+      {tiered && (
+        <div className="mt-2.5 space-y-2 rounded-md border bg-slate-50/60 p-3 text-[13px]">
+          {tiered.tiers.map((t, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="text-slate-500">达成 ≥</span>
+              <input
+                type="number" min={0} value={t.minCount} className={numCls}
+                onChange={(e) => onChange({ ...tiered, tiers: tiered.tiers.map((x, j) => (j === i ? { ...x, minCount: Math.max(0, Number(e.target.value)) } : x)) })}
+              />
+              <span className="text-slate-500">件,得分</span>
+              <input
+                type="number" min={0} max={100} value={Math.round(t.score * 100)} className={numCls}
+                onChange={(e) => onChange({ ...tiered, tiers: tiered.tiers.map((x, j) => (j === i ? { ...x, score: Math.min(100, Math.max(0, Number(e.target.value))) / 100 } : x)) })}
+              />
+              <span className="text-slate-500">%</span>
+              <button
+                type="button"
+                disabled={tiered.tiers.length <= 1}
+                onClick={() => onChange({ ...tiered, tiers: tiered.tiers.filter((_, j) => j !== i) })}
+                className="ml-auto rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
+                aria-label="删除档位"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ))}
+          <div className="flex items-center gap-2 border-t pt-2">
+            <span className="text-slate-500">否则得分</span>
+            <input
+              type="number" min={0} max={100} value={Math.round(tiered.elseScore * 100)} className={numCls}
+              onChange={(e) => onChange({ ...tiered, elseScore: Math.min(100, Math.max(0, Number(e.target.value))) / 100 })}
+            />
+            <span className="text-slate-500">%</span>
+            <button
+              type="button"
+              onClick={() => onChange({ ...tiered, tiers: [...tiered.tiers, { minCount: 1, score: 0.3 }] })}
+              className="ml-auto text-xs text-teal-700 hover:underline"
+            >
+              + 添加档位
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// —— 我的贡献:我名下(负责人/共同发明人)哪些专利计入 KPI、每件还差哪个节点 ——
+function MyContribution() {
+  const { me, kpiRules, patents, transitions, cycles, config } = useStore()
+  const rules = kpiRules.filter((r) => r.enabled && (r.scope.type === 'global' || r.scope.teamId === me.teamId))
+  const rows = rules.flatMap((r) => {
+    const report = computeKpi(r, patents, transitions, cycles, config)
+    return report.items
+      .filter((it) => it.ownerId === me.id || it.collaborators.includes(me.id))
+      .map((it) => ({ r, it }))
+  })
+
+  return (
+    <section className="rounded-lg border bg-card p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-base font-semibold tracking-tight">我的贡献</h2>
+        <span className="text-xs text-muted-foreground">你作为负责人或共同发明人、计入 KPI 的专利</span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="mt-4 text-sm text-muted-foreground">当前没有计入 KPI 的专利。私有专利不进入统计,提交审查前请先改为团队可见。</p>
+      ) : (
+        <table className="mt-3 w-full table-fixed text-[13px]">
+          <thead>
+            <tr className="border-b text-left text-xs text-slate-500">
+              <th className="w-[30%] py-2 pr-4 font-medium">专利</th>
+              <th className="w-[20%] py-2 pr-4 font-medium">规则</th>
+              <th className="w-[14%] py-2 pr-4 font-medium">当前阶段</th>
+              <th className="py-2 font-medium">进度 / 下一个节点</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.map(({ r, it }) => {
+              const nextIdx = it.achievedTargets.findIndex((a) => !a)
+              const next = nextIdx >= 0 ? r.targets[nextIdx] : null
+              const cycle = cycles.find((c) => c.id === r.cycleId)
+              const reachedAt = next && cycle ? firstReach(it.patentId, next.stage, transitions) : undefined
+              return (
+                <tr key={`${r.id}-${it.patentId}`}>
+                  <td className="truncate py-2.5 pr-4 font-medium" title={it.title}>{it.title}</td>
+                  <td className="truncate py-2.5 pr-4 text-xs text-muted-foreground" title={r.name}>{r.name}</td>
+                  <td className="py-2.5 pr-4"><StagePill stage={it.currentStage} /></td>
+                  <td className="py-2.5 text-xs">
+                    <span className="mr-2 font-mono-x font-bold text-teal-700">
+                      {it.achievedTargets.filter(Boolean).length}/{r.targets.length}
+                    </span>
+                    {next ? (
+                      reachedAt && cycle && reachedAt < cycle.start
+                        ? <span className="text-slate-500">「{stageLabel(next.stage)}」已在往期周期到达,本周期不重复计</span>
+                        : reachedAt
+                          ? <span className="text-slate-500">{reachedAt} 才到达「{stageLabel(next.stage)}」,晚于截止 {next.deadline}</span>
+                          : next.deadline < today()
+                            ? <span className="text-red-600">已过截止 {next.deadline},未到达「{stageLabel(next.stage)}」</span>
+                            : <span className="text-amber-700">{next.deadline} 前推进到「{stageLabel(next.stage)}」</span>
+                    ) : (
+                      <span className="text-teal-700">全部达成</span>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   )
 }

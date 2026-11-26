@@ -1,19 +1,19 @@
-import { useMemo } from 'react'
-import { useStore, computeKpi, computeStageTrend, monthRange, teamName } from '@/lib/store'
+import { useStore, computeKpi, computeStageTrend, monthRange, teamName, today, daysBetween } from '@/lib/store'
 import { STAGES, stageIndex, stageLabel, type Patent } from '@/lib/types'
-import { DueChip, SectionTitle, StagePill, StageTrendChart, VisibilityTag, STAGE_COLOR } from '@/components/pf'
+import { DueChip, RiskTag, SectionTitle, StagePill, StageTrendChart, ToneTag, VisibilityTag, STAGE_COLOR } from '@/components/pf'
 import type { Page } from '@/components/AppShell'
-import { AlertTriangle, ArrowRight, ClipboardCheck, Hourglass } from 'lucide-react'
-
-const TODAY = new Date('2026-11-26')
+import { AlertTriangle, ArrowRight, CalendarClock, ClipboardCheck, Hourglass, RefreshCw, SearchCheck } from 'lucide-react'
 
 function daysUntil(d?: string) {
   if (!d) return Infinity
-  return Math.ceil((new Date(d).getTime() - TODAY.getTime()) / 86400000)
+  return daysBetween(today(), d)
 }
 
 export default function Dashboard({ navigate }: { navigate: (p: Page) => void }) {
-  const { me, persona, visiblePatents, kpiRules, patents, transitions, userById, cycles, config, activeCycle, stageOverdueDays, closingRisk, reviewExtension } = useStore()
+  const {
+    me, persona, visiblePatents, kpiRules, patents, transitions, userById, cycles, config, activeCycle,
+    stageOverdueDays, closingRisk, reviewExtension, reviewRejected, canOperatePatent,
+  } = useStore()
   const visible = visiblePatents()
   const active = visible.filter((p) => !p.archived) // 归档专利退出流水线视图
   const cycle = activeCycle()
@@ -34,27 +34,28 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
   const riskRows = active.map((p) => ({ p, risk: closingRisk(p) })).filter((r) => r.risk)
   const doomed = riskRows.filter((r) => r.risk === 'doomed')
   const tightCount = riskRows.filter((r) => r.risk === 'tight').length
-  const cycleDaysLeft = cycle
-    ? Math.max(0, Math.floor((Date.parse(cycle.end) - Date.parse(new Date().toISOString().slice(0, 10))) / 86400000))
-    : null
+  const cycleDaysLeft = cycle ? Math.max(0, daysBetween(today(), cycle.end)) : null
   const lastActivity = (pid: string) => {
     const ts = transitions.filter((t) => t.patentId === pid)
     return ts.length ? ts[ts.length - 1].at.slice(0, 10) : '—'
   }
 
-  // 待我审查:我是 reviewer 且尚未提交
-  const myReviews = useMemo(
-    () =>
-      patents.filter((p) =>
-        p.stageData.patentability.reviewers.some((r) => r.userId === me.id && !r.score),
-      ),
-    [patents, me.id],
-  )
+  // 待我审查:当前处于审查阶段、我是本轮 reviewer、未提交且未拒绝
+  const myReviews = patents
+        .filter((p) => p.stage === 'patentability' && !p.archived)
+        .map((p) => ({ p, a: p.stageData.patentability.reviewers.find((r) => r.userId === me.id && !r.score && !r.declined) }))
+        .filter((x) => !!x.a)
+        .sort((a, b) => (a.a!.dueDate ?? '').localeCompare(b.a!.dueDate ?? ''))
+  // 被打回、等我发起新一轮的专利
+  const rejectedMine = active.filter((p) => p.stage === 'patentability' && canOperatePatent(p) && p.ownerId === me.id && reviewRejected(p))
+  // 回退后需复核的阶段
+  const recheckMine = active.filter((p) => (p.ownerId === me.id || p.collaborators.includes(me.id)) && p.needsRecheck.includes(p.stage))
+  const approvalTodos = isManagerRole(me.role) ? pendingExts : []
 
   // 临期:可见专利里任一阶段 due ≤ 14 天或已逾期
-  const upcoming = useMemo(() => {
+  const upcoming = (() => {
     const list: { p: Patent; stage: string; date: string; days: number }[] = []
-    for (const p of active) {
+    for (const p of active.filter((x) => x.ownerId === me.id || x.collaborators.includes(me.id))) { // 待办只含我负责或参与的专利
       for (const [k, d] of Object.entries(p.dueDates)) {
         const days = daysUntil(d)
         if (d && days <= 14 && stageIndex(k as never) >= stageIndex(p.stage)) {
@@ -63,7 +64,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
       }
     }
     return list.sort((a, b) => a.days - b.days)
-  }, [active])
+  })()
 
   const myPatents = active.filter((p) => p.ownerId === me.id || p.collaborators.includes(me.id))
   const stageCounts = STAGES.map((s) => ({
@@ -81,16 +82,16 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
   // GL/PL 统计视图:各阶段数量随时间的趋势
   // 范围:PL 看本组;GL 看全部可见(private 完全透明,不进入统计)
   const isManager = me.role === 'pl' || me.role === 'gl'
-  const trend = useMemo(() => {
+  const trend = (() => {
     if (!isManager) return null
     const scoped = me.role === 'gl' ? active : active.filter((p) => p.teamId === me.teamId)
-    const earliest = scoped.reduce((a, p) => (p.createdAt < a ? p.createdAt : a), '2026-11-26')
-    const months = monthRange(earliest.slice(0, 7), '2026-11')
+    const earliest = scoped.reduce((a, p) => (p.createdAt < a ? p.createdAt : a), today())
+    const months = monthRange(earliest.slice(0, 7), today().slice(0, 7))
     return {
       points: computeStageTrend(scoped, transitions, months),
       scopeLabel: me.role === 'gl' ? '全局(不含 private)' : teamName(me.teamId),
     }
-  }, [isManager, me.role, me.teamId, active, transitions])
+  })()
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -98,10 +99,15 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="ui-label text-teal-700">
-            {new Date().toISOString().slice(0, 10)} · {persona.label}视角
+            {today()} · {persona.label}视角
           </div>
           <h1 className="mt-1 text-2xl font-bold tracking-tight">
-            {me.name},今天有 {myReviews.length} 项审查、{upcoming.filter((u) => u.days <= 7).length} 个临近截止
+            {headline(me.name, [
+              [myReviews.length, '项待审查'],
+              [rejectedMine.length, '件被打回待修改'],
+              [approvalTodos.length, '个延期待审批'],
+              [upcoming.filter((u) => u.days <= 7).length, '个临近截止'],
+            ])}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {me.role === 'gl' ? '你正在查看全部团队的公开与团队可见专利(private 仅发明人可见)。'
@@ -128,26 +134,17 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
             <button
               key={s.key}
               type="button"
-              onClick={() => navigate({ name: 'patents' })}
-              className="rounded-lg border bg-card p-4 text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              onClick={() => navigate({ name: 'patents', stage: s.key })}
+              title={`查看「${s.label}」阶段的专利`}
+              className="group relative overflow-hidden rounded-lg border bg-card p-4 text-left transition-all hover:-translate-y-px hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
             >
-              <div className="font-mono-x text-[10px] tracking-widest" style={{ color: STAGE_COLOR[s.key] }}>
-                {s.en}
-              </div>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="font-mono-x text-3xl font-bold" style={{ color: STAGE_COLOR[s.key] }}>
+              <span className="absolute inset-x-0 top-0 h-0.5" style={{ backgroundColor: STAGE_COLOR[s.key] }} />
+              <div className="text-xs font-medium text-slate-500">{s.label}</div>
+              <div className="mt-1 flex items-end justify-between">
+                <span className="font-mono-x text-3xl font-bold leading-none" style={{ color: STAGE_COLOR[s.key] }}>
                   {s.count}
                 </span>
-                <span className="text-xs text-muted-foreground">{s.label}</span>
-              </div>
-              <div className="mt-2.5 h-1 rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{
-                    width: `${active.length ? (s.count / active.length) * 100 : 0}%`,
-                    backgroundColor: STAGE_COLOR[s.key],
-                  }}
-                />
+                <ArrowRight className="size-4 text-slate-300 transition-colors group-hover:text-slate-500" />
               </div>
             </button>
           ))}
@@ -262,7 +259,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
 
             <div className="border-t pt-3">
               <div className="mb-2 text-xs font-medium text-muted-foreground">
-                收口风险:从容 {riskRows.length - doomed.length - tightCount} · 紧张 {tightCount} · 注定逾期 {doomed.length}
+                收口风险:从容 {riskRows.length - doomed.length - tightCount} · 偏紧 {tightCount} · 预计超出周期 {doomed.length}
               </div>
               {doomed.length > 0 && (
                 <div className="space-y-1.5">
@@ -279,9 +276,8 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                         {p.title}
                       </button>
                       <span className="text-muted-foreground">
-                        {stageLabel(p.stage)} · 剩余流程预算超过周期剩余天数
+                        {stageLabel(p.stage)} · 按默认周期估算,剩余流程超出本周期
                       </span>
-                      <span className="font-medium text-red-600">注定逾期</span>
                     </div>
                   ))}
                 </div>
@@ -296,24 +292,49 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
         <section className="lg:col-span-3">
           <SectionTitle en="TODO" zh="待办事项" />
           <div className="divide-y rounded-lg border bg-card">
-            {myReviews.map((p) => (
-              <button
+            {myReviews.map(({ p, a }) => (
+              <TodoRow
                 key={`r-${p.id}`}
-                type="button"
                 onClick={() => navigate({ name: 'patent', id: p.id })}
-                className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-600"
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-teal-50 text-teal-700">
-                  <ClipboardCheck className="size-4" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{p.title}</span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    待你审查 · {userById(p.ownerId).name} 提交 · 三维度评分
-                  </span>
-                </span>
-                <StagePill stage={p.stage} />
-              </button>
+                icon={<ClipboardCheck className="size-4" />}
+                iconCls="bg-teal-50 text-teal-700"
+                title={p.title}
+                sub={`待你审查 · 第 ${p.stageData.patentability.round} 轮 · ${userById(p.ownerId).name} 提交`}
+                right={a?.dueDate ? <DueChip date={a.dueDate} /> : <ToneTag tone="ok">待审查</ToneTag>}
+              />
+            ))}
+            {rejectedMine.map((p) => (
+              <TodoRow
+                key={`j-${p.id}`}
+                onClick={() => navigate({ name: 'patent', id: p.id })}
+                icon={<RefreshCw className="size-4" />}
+                iconCls="bg-red-50 text-red-600"
+                title={p.title}
+                sub={`第 ${p.stageData.patentability.round} 轮审查被打回 · 修改后发起新一轮`}
+                right={<ToneTag tone="danger">被打回</ToneTag>}
+              />
+            ))}
+            {approvalTodos.map(({ p, e }) => (
+              <TodoRow
+                key={`e-${e.id}`}
+                onClick={() => navigate({ name: 'patent', id: p.id })}
+                icon={<CalendarClock className="size-4" />}
+                iconCls="bg-amber-50 text-amber-700"
+                title={p.title}
+                sub={`${userById(e.by).name} 申请延期 ${e.oldDue} → ${e.newDue}`}
+                right={<ToneTag tone="warn">待审批</ToneTag>}
+              />
+            ))}
+            {recheckMine.map((p) => (
+              <TodoRow
+                key={`c-${p.id}`}
+                onClick={() => navigate({ name: 'patent', id: p.id })}
+                icon={<SearchCheck className="size-4" />}
+                iconCls="bg-amber-50 text-amber-700"
+                title={p.title}
+                sub={`${stageLabel(p.stage)} 阶段回退后重新进入,内容需复核`}
+                right={<ToneTag tone="warn">需复核</ToneTag>}
+              />
             ))}
             {upcoming.slice(0, 5).map((u) => (
               <button
@@ -332,7 +353,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                 <DueChip date={u.date} />
               </button>
             ))}
-            {myReviews.length === 0 && upcoming.length === 0 && (
+            {myReviews.length + rejectedMine.length + approvalTodos.length + recheckMine.length + upcoming.length === 0 && (
               <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                 没有待办。该写的草案写完了吗?
               </div>
@@ -405,17 +426,8 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                   className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-600"
                 >
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{p.title}</span>
-                  {stageOverdueDays(p) > 0 && (
-                    <span className="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600">
-                      逾期 {stageOverdueDays(p)} 天
-                    </span>
-                  )}
-                  {closingRisk(p) === 'doomed' && (
-                    <span className="shrink-0 rounded border border-red-300 px-1.5 py-0.5 text-[10px] text-red-600">收口告急</span>
-                  )}
-                  {closingRisk(p) === 'tight' && (
-                    <span className="shrink-0 rounded border border-amber-300 px-1.5 py-0.5 text-[10px] text-amber-600">收口紧张</span>
-                  )}
+                  {stageOverdueDays(p) > 0 && <ToneTag tone="danger">逾期 {stageOverdueDays(p)} 天</ToneTag>}
+                  <RiskTag risk={closingRisk(p)} />
                   <VisibilityTag v={p.visibility} />
                   <StagePill stage={p.stage} />
                 </button>
@@ -425,5 +437,32 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
         </section>
       </div>
     </div>
+  )
+}
+
+const isManagerRole = (r: string) => r === 'pl' || r === 'gl'
+
+// 标题只列非零项,全为零时给一句积极的话
+function headline(name: string, parts: [number, string][]) {
+  const nz = parts.filter(([n]) => n > 0).map(([n, l]) => `${n} ${l}`)
+  return nz.length ? `${name},今天有 ${nz.join('、')}` : `${name},今天没有紧急事项`
+}
+
+function TodoRow({
+  onClick, icon, iconCls, title, sub, right,
+}: { onClick: () => void; icon: React.ReactNode; iconCls: string; title: string; sub: string; right: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-600"
+    >
+      <span className={`flex size-8 shrink-0 items-center justify-center rounded-md ${iconCls}`}>{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{title}</span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{sub}</span>
+      </span>
+      {right}
+    </button>
   )
 }

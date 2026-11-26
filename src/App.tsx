@@ -19,7 +19,7 @@ function Shell() {
   return (
     <AppShell page={page} navigate={setPage}>
       {page.name === 'dashboard' && <Dashboard navigate={setPage} />}
-      {page.name === 'patents' && <PatentList navigate={setPage} />}
+      {page.name === 'patents' && <PatentList key={page.stage ?? 'all'} navigate={setPage} initialStage={page.stage} />}
       {page.name === 'patent' && <PatentDetail id={page.id} navigate={setPage} />}
       {page.name === 'kpi' && <Kpi />}
       {page.name === 'admin' && <Admin />}

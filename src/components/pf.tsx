@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils'
+import { today, daysBetween } from '@/lib/store'
 import { STAGES, stageIndex, type Patent, type StageKey, type Visibility } from '@/lib/types'
 import { Check, Lock, RotateCcw, Users, Globe, Clock, Archive } from 'lucide-react'
 
@@ -16,7 +17,7 @@ export function StagePill({ stage, className }: { stage: StageKey; className?: s
   const c = STAGE_COLOR[stage]
   return (
     <span
-      className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium', className)}
+      className={cn('inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium', className)}
       style={{ color: c, backgroundColor: `${c}14`, border: `1px solid ${c}33` }}
     >
       <span className="size-1.5 rounded-full" style={{ backgroundColor: c }} />
@@ -56,23 +57,41 @@ export function VisibilityTag({ v }: { v: Visibility }) {
   )
 }
 
-// —— due date 徽标:>7d 灰,≤7d 琥珀,逾期红且脉冲 ——
+// —— 统一状态色:四档语义,所有徽标(截止、收口风险、审批状态……)共用 ——
+export type Tone = 'neutral' | 'info' | 'warn' | 'danger' | 'ok'
+export const TONE: Record<Tone, { chip: string; dot: string }> = {
+  neutral: { chip: 'text-slate-600 bg-slate-50 border-slate-200', dot: '#94a3b8' },
+  info: { chip: 'text-sky-700 bg-sky-50 border-sky-200', dot: '#0284c7' },
+  ok: { chip: 'text-teal-700 bg-teal-50 border-teal-200', dot: '#0d9488' },
+  warn: { chip: 'text-amber-700 bg-amber-50 border-amber-200', dot: '#d97706' },
+  danger: { chip: 'text-red-700 bg-red-50 border-red-200', dot: '#dc2626' },
+}
+
+export function ToneTag({ tone, children, className, title }: { tone: Tone; children: React.ReactNode; className?: string; title?: string }) {
+  return (
+    <span title={title} className={cn('inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-px text-[11px] font-medium', TONE[tone].chip, className)}>
+      {children}
+    </span>
+  )
+}
+
+// 收口风险标签(措辞克制:说明事实,不下结论)
+export function RiskTag({ risk }: { risk: 'comfortable' | 'tight' | 'doomed' | null }) {
+  if (risk === 'tight') return <ToneTag tone="warn" title="剩余周期天数接近剩余阶段默认预算">收口偏紧</ToneTag>
+  if (risk === 'doomed') return <ToneTag tone="danger" title="按各阶段默认周期估算,剩余流程将超出本周期结束日">预计超出周期</ToneTag>
+  return null
+}
+
+// —— due date 徽标:>7d 中性,≤7d 警示,逾期危险且脉冲 ——
 export function DueChip({ date }: { date?: string }) {
   if (!date) return <span className="text-xs text-muted-foreground">未设截止</span>
-  const today = new Date('2026-11-26')
-  const d = new Date(date)
-  const days = Math.ceil((d.getTime() - today.getTime()) / 86400000)
-  const state = days < 0 ? 'over' : days <= 7 ? 'soon' : 'ok'
-  const styles = {
-    over: 'text-red-700 bg-red-50 border-red-200',
-    soon: 'text-amber-700 bg-amber-50 border-amber-200',
-    ok: 'text-slate-600 bg-slate-50 border-slate-200',
-  }
+  const days = daysBetween(today(), date)
+  const tone: Tone = days < 0 ? 'danger' : days <= 7 ? 'warn' : 'neutral'
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded border px-1.5 py-px font-mono-x text-[11px]', styles[state])}>
+    <span className={cn('inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border px-1.5 py-px font-mono-x text-[11px]', TONE[tone].chip)}>
       <span
-        className={cn('size-1.5 rounded-full', state === 'over' && 'pulse-dot')}
-        style={{ backgroundColor: state === 'over' ? '#dc2626' : state === 'soon' ? '#d97706' : '#94a3b8' }}
+        className={cn('size-1.5 rounded-full', days < 0 && 'pulse-dot')}
+        style={{ backgroundColor: TONE[tone].dot }}
       />
       {date}
       <span className="font-sans">{days < 0 ? `逾期 ${-days} 天` : days === 0 ? '今天到期' : `剩 ${days} 天`}</span>
@@ -80,56 +99,75 @@ export function DueChip({ date }: { date?: string }) {
   )
 }
 
-// —— 五阶段步进器 ——
-export function StageStepper({ patent, onSelect }: { patent: Patent; onSelect?: (k: StageKey) => void }) {
+// —— 五阶段步进器:五等分栅格,连接线贯穿圆点之间 ——
+export function StageStepper({
+  patent, onSelect, selected,
+}: { patent: Patent; onSelect?: (k: StageKey) => void; selected?: StageKey }) {
   const cur = stageIndex(patent.stage)
   return (
-    <div className="flex items-start">
+    <div className="grid grid-cols-5">
       {STAGES.map((s, i) => {
         const done = i < cur
         const active = i === cur
         const color = STAGE_COLOR[s.key]
+        const recheck = patent.needsRecheck.includes(s.key) && i > cur
         return (
-          <div key={s.key} className="flex flex-1 items-start last:flex-none">
+          <div key={s.key} className="relative">
+            {i > 0 && (
+              <div
+                className="absolute right-1/2 top-4 h-0.5 w-full -translate-y-1/2"
+                style={{ backgroundColor: i <= cur ? color : '#e2e8f0' }}
+              />
+            )}
             <button
               type="button"
               onClick={() => onSelect?.(s.key)}
-              className="group flex w-full min-w-0 flex-col items-center gap-1.5 focus-visible:outline-none"
+              className={cn(
+                'group relative flex w-full min-w-0 flex-col items-center gap-1.5 rounded-md pb-1 focus-visible:outline-none',
+                selected === s.key && 'bg-slate-50',
+              )}
             >
               <span
-                className={cn(
-                  'flex size-8 items-center justify-center rounded-full border-2 text-[11px] font-semibold transition-all duration-200',
-                  'group-focus-visible:ring-2 group-focus-visible:ring-teal-700/40',
-                )}
+                className="relative z-10 flex size-8 items-center justify-center rounded-full border-2 bg-white text-[11px] font-semibold transition-all duration-200 group-hover:scale-105 group-focus-visible:ring-2 group-focus-visible:ring-teal-700/40"
                 style={{
                   borderColor: done || active ? color : '#cbd5e1',
-                  backgroundColor: done ? color : active ? '#fff' : '#fff',
+                  backgroundColor: done ? color : '#fff',
                   color: done ? '#fff' : active ? color : '#94a3b8',
                   boxShadow: active ? `0 0 0 4px ${color}22` : undefined,
                 }}
               >
                 {done ? <Check className="size-4" /> : i + 1}
               </span>
-              <span
-                className={cn('max-w-full truncate text-center text-xs leading-tight', active ? 'font-semibold text-foreground' : 'text-muted-foreground')}
-              >
+              <span className={cn('max-w-full truncate text-center text-xs leading-tight', active ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
                 {s.label}
               </span>
-              <span className="font-mono-x text-[9px] tracking-widest" style={{ color: done || active ? color : '#b6bfcc' }}>
-                {s.en}
-              </span>
-              {i >= cur && patent.dueDates[s.key] && (
-                <span className="mt-0.5 scale-90">
-                  <DueChip date={patent.dueDates[s.key]} />
-                </span>
-              )}
+              {i >= cur && patent.dueDates[s.key] && <DueChip date={patent.dueDates[s.key]} />}
+              {recheck && <ToneTag tone="warn">需复核</ToneTag>}
             </button>
-            {i < STAGES.length - 1 && (
-              <div className="mx-1 mt-4 h-0.5 min-w-4 flex-1 rounded" style={{ backgroundColor: i < cur ? STAGE_COLOR[STAGES[i + 1].key] : '#e2e8f0' }} />
-            )}
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// —— 三维度评分条(替代雷达图:三维度下横条更易读,标签不截断) ——
+export function ScoreBars({
+  values, labels, color = '#0d9488', compact,
+}: { values: number[]; labels: string[]; color?: string; compact?: boolean }) {
+  return (
+    <div className={cn('space-y-1.5', compact ? 'w-52 shrink-0' : 'w-full')}>
+      {labels.map((l, i) => (
+        <div key={l} className="flex items-center gap-2 text-xs">
+          <span className="w-[6.5em] shrink-0 whitespace-nowrap text-slate-500">{l}</span>
+          <div className="flex flex-1 gap-0.5">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <span key={n} className="h-1.5 flex-1 rounded-sm" style={{ backgroundColor: n <= values[i] ? color : '#e2e8f0' }} />
+            ))}
+          </div>
+          <span className="w-3 text-right font-mono-x font-bold" style={{ color }}>{values[i] || '–'}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -198,12 +236,15 @@ export function RollbackHint() {
   )
 }
 
-export function SectionTitle({ en, zh, right }: { en: string; zh: string; right?: React.ReactNode }) {
+// 英文眉标只用于页面一级标题;区块标题只保留中文,降低信息噪音
+export function SectionTitle({ en, zh, right, page }: { en?: string; zh: string; right?: React.ReactNode; page?: boolean }) {
   return (
-    <div className="mb-3 flex items-end justify-between gap-3">
+    <div className={cn('flex items-end justify-between gap-3', page ? 'mb-5' : 'mb-3')}>
       <div>
-        <div className="ui-label text-teal-700">{en}</div>
-        <h2 className="mt-0.5 text-lg font-bold tracking-tight">{zh}</h2>
+        {page && en && <div className="ui-label text-teal-700">{en}</div>}
+        {page
+          ? <h1 className="mt-1 text-2xl font-bold tracking-tight">{zh}</h1>
+          : <h2 className="text-base font-semibold tracking-tight">{zh}</h2>}
       </div>
       {right}
     </div>
