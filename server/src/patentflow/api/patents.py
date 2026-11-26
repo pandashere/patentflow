@@ -11,6 +11,7 @@ from ..deps import Auth, current_auth, get_db
 from ..domain import access, patents, reviews
 from ..domain.constants import STAGE_KEYS
 from ..domain.errors import not_found
+from ..domain.common import get_visible as get_visible_patent
 from ..domain.repo import load_patent, load_patents, load_transitions, load_versions, public_patent
 from ._util import patent_out, run
 
@@ -252,6 +253,36 @@ async def migrate(pid: str, body: TeamIn, request: Request, auth: Auth = Depends
 async def delete(pid: str, request: Request, auth: Auth = Depends(current_auth)) -> dict[str, bool]:
     await run(request, auth, lambda ctx: patents.delete(ctx, pid))
     return {"ok": True}
+
+
+class NotifyPreviewIn(BaseModel):
+    event: Literal["review", "due", "transition"] = "transition"
+    config: list[dict[str, Any]]  # 尚未保存的阶段通知配置
+
+
+@router.post("/patents/{pid}/notification-settings/preview")
+async def notification_preview(pid: str, body: NotifyPreviewIn, request: Request,
+                               auth: Auth = Depends(current_auth)) -> dict[str, Any]:
+    """按尚未保存的配置,预演当前阶段某类事件会送达谁(含个人屏蔽 / 免打扰说明),并探测回调连通性。
+    不产生任何真实通知。"""
+    from ..domain.notifications import explain_recipients
+    from ..notify import probe
+
+    async def go(ctx):  # type: ignore[no-untyped-def]
+        p = await get_visible_patent(ctx, pid)
+        if not access.can_edit(ctx.me, p):
+            from ..domain.errors import forbidden
+
+            raise forbidden()
+        p = {**p, "notify": body.config}
+        return await explain_recipients(ctx, body.event, p)
+
+    rows = await run(request, auth, go)
+    settings = request.app.state.settings
+    url = getattr(request.app.state.notifier, "url", "") or settings.webhook_url
+    webhook = await probe(url, settings.webhook_secret, {"event": "test", "text": "PATENTFLOW 通知配置预演",
+                                                         "patentId": pid}) if url else None
+    return {"recipients": rows, "webhookConfigured": bool(url), "webhook": webhook}
 
 
 # —— 审查 ——

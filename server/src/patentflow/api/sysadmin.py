@@ -137,7 +137,7 @@ async def me(admin: str = Depends(current_admin)) -> dict[str, str]:
 @router.get("/overview")
 async def overview(admin: str = Depends(current_admin), db: Database = Depends(get_db)) -> dict[str, Any]:
     """账号视图:不含任何专利内容。"""
-    users = await load_users(db.reader)  # type: ignore[arg-type]
+    users = await load_users(db.reader, include_pending=True)  # type: ignore[arg-type]
     pw = {r["id"]: bool(r["password_hash"]) for r in await db.all("SELECT id, password_hash FROM users")}
     tokens = {r["user_id"]: r["n"] for r in await db.all(
         "SELECT user_id, COUNT(*) n FROM api_tokens WHERE revoked = 0 GROUP BY user_id")}
@@ -264,6 +264,30 @@ async def create_team(body: TeamIn, request: Request, admin: str = Depends(curre
         await conn.execute("INSERT INTO teams(id, name, pl_id) VALUES(?,?,?)", (tid, body.name.strip(), body.plId))
         await audit(conn, request, admin, "create_team", body.name.strip())
     return {"id": tid, "name": body.name.strip(), "plId": body.plId}
+
+
+SYSADMIN_ACTOR = {"id": "sysadmin", "name": "系统管理员", "role": "gl", "teamId": ""}
+
+
+class ApproveIn(BaseModel):
+    teamId: str | None = None
+    role: Literal["user", "pl", "gl"] | None = None
+
+
+@router.post("/registrations/{uid}/{action}")
+async def decide_registration(uid: str, action: Literal["approve", "reject"], body: ApproveIn, request: Request,
+                              admin: str = Depends(current_admin), db: Database = Depends(get_db),
+                              settings: Settings = Depends(get_settings)) -> dict[str, bool]:
+    from ..domain import members
+
+    u = await _user(db, uid)
+    async with write_ctx(db, SYSADMIN_ACTOR, settings, request.app.state.notifier) as ctx:
+        if action == "approve":
+            await members.approve(ctx, uid, body.teamId, body.role)
+        else:
+            await members.reject(ctx, uid, "系统管理员未通过")
+        await audit(ctx.conn, request, admin, f"registration_{action}", u["email"])
+    return {"ok": True}
 
 
 @router.get("/audit")

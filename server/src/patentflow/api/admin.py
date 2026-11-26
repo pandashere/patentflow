@@ -15,11 +15,13 @@ from ..db import Database
 from ..deps import Auth, current_auth, get_db, get_settings, require_gl
 from ..domain import access, members
 from ..domain.errors import DomainError, bad_request, forbidden, not_found
-from ..domain.prefs import get_prefs, save_prefs
+from ..domain.prefs import get_prefs, in_quiet_hours, save_prefs
+from ..notify import probe
 from ..domain.repo import load_patents, load_transitions, load_user, load_users, load_versions, public_patent
 from ..domain.sysconfig import get_system, save_system, validate_system
 from ..security import new_id, new_token, sha256
 from ..timeutil import now, today
+from ..app import sync_webhook
 from ._util import run
 from .planning import all_cycles, all_rules, reports_for, rule_visible
 
@@ -32,6 +34,34 @@ class MemberIn(BaseModel):
     title: str = ""
     teamId: str
     role: Literal["user", "pl", "gl"] = "user"
+
+
+class ApproveIn(BaseModel):
+    teamId: str | None = None
+    role: Literal["user", "pl", "gl"] | None = None
+
+
+class RejectIn(BaseModel):
+    reason: str = ""
+
+
+class TeamCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    plId: str | None = None
+    demoteOld: bool = True
+
+
+class TeamRenameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+
+
+class TeamPlIn(BaseModel):
+    userId: str | None = None
+    demoteOld: bool = True
+
+
+class WebhookTestIn(BaseModel):
+    url: str | None = None
 
 
 class DeactivateIn(BaseModel):
@@ -73,8 +103,103 @@ async def teams(auth: Auth = Depends(current_auth), db: Database = Depends(get_d
 @router.post("/users", status_code=201)
 async def add_user(body: MemberIn, request: Request, auth: Auth = Depends(current_auth),
                    db: Database = Depends(get_db)) -> dict[str, Any]:
-    uid = await run(request, auth, lambda ctx: members.add_member(ctx, body.model_dump()))
-    return await load_user(db.reader, uid)  # type: ignore[arg-type,return-value]
+    """GL 任意团队;本组 PL 向本组添加普通用户。返回激活链接(只返回这一次,同时已发给本人)。"""
+    uid, link = await run(request, auth, lambda ctx: members.add_member(ctx, body.model_dump(), str(request.base_url)))
+    return {"user": await load_user(db.reader, uid), "activationLink": link}  # type: ignore[arg-type]
+
+
+# —— 自助注册审批 ——
+async def pending_for(db: Database, me: dict[str, Any], cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    if me["role"] == "user" or (me["role"] == "pl" and not cfg["members"].get("plCanManage", True)):
+        return []
+    rows = await load_users(db.reader, include_pending=True)  # type: ignore[arg-type]
+    return [u for u in rows if u.get("pending") and (me["role"] == "gl" or u["teamId"] == me["teamId"])]
+
+
+@router.get("/registrations")
+async def registrations(auth: Auth = Depends(current_auth), db: Database = Depends(get_db)) -> list[dict[str, Any]]:
+    return await pending_for(db, auth.user, await get_system(db.reader))  # type: ignore[arg-type]
+
+
+@router.post("/registrations/{uid}/approve")
+async def approve_registration(uid: str, body: ApproveIn, request: Request,
+                               auth: Auth = Depends(current_auth)) -> dict[str, bool]:
+    await run(request, auth, lambda ctx: members.approve(ctx, uid, body.teamId, body.role))
+    return {"ok": True}
+
+
+@router.post("/registrations/{uid}/reject")
+async def reject_registration(uid: str, body: RejectIn, request: Request,
+                              auth: Auth = Depends(current_auth)) -> dict[str, bool]:
+    await run(request, auth, lambda ctx: members.reject(ctx, uid, body.reason))
+    return {"ok": True}
+
+
+# —— 团队(GL)——
+@router.post("/teams", status_code=201)
+async def create_team(body: TeamCreateIn, request: Request, auth: Auth = Depends(current_auth),
+                      db: Database = Depends(get_db)) -> dict[str, Any]:
+    tid = await run(request, auth, lambda ctx: members.create_team(ctx, body.name, body.plId, body.demoteOld))
+    return next(t for t in await teams_json(db) if t["id"] == tid)
+
+
+@router.patch("/teams/{tid}")
+async def rename_team(tid: str, body: TeamRenameIn, request: Request, auth: Auth = Depends(current_auth)) -> dict[str, bool]:
+    await run(request, auth, lambda ctx: members.rename_team(ctx, tid, body.name))
+    return {"ok": True}
+
+
+@router.delete("/teams/{tid}")
+async def delete_team(tid: str, request: Request, auth: Auth = Depends(current_auth)) -> dict[str, bool]:
+    await run(request, auth, lambda ctx: members.delete_team(ctx, tid))
+    return {"ok": True}
+
+
+@router.put("/teams/{tid}/pl")
+async def set_team_pl(tid: str, body: TeamPlIn, request: Request, auth: Auth = Depends(current_auth)) -> dict[str, Any]:
+    return await run(request, auth, lambda ctx: members.set_team_pl(ctx, tid, body.userId, body.demoteOld))
+
+
+# —— 回调连通性测试 ——
+@router.post("/notify/test-webhook")
+async def test_webhook(body: WebhookTestIn, request: Request, auth: Auth = Depends(require_gl),
+                       db: Database = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """GL 测试回调地址(可先测再保存):发送一条带签名的测试事件,返回状态码、耗时与失败原因。"""
+    cfg = await get_system(db.reader)  # type: ignore[arg-type]
+    url = (body.url if body.url is not None else cfg.get("webhookUrl") or settings.webhook_url).strip()
+    if not url:
+        raise bad_request("尚未填写回调地址")
+    res = await probe(url, settings.webhook_secret, {
+        "event": "test", "text": f"PATENTFLOW 回调连通性测试({auth.user['name']} 发起)", "at": now(),
+        "recipients": [{"id": auth.id, "name": auth.user["name"], "email": auth.user["email"]}],
+    })
+    return {**res, "url": url, "signed": bool(settings.webhook_secret)}
+
+
+@router.post("/me/notify-test")
+async def notify_me(request: Request, auth: Auth = Depends(current_auth), db: Database = Depends(get_db),
+                    settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """给自己发一条测试通知:站内信必达;若配置了回调,同步探测一次回调投递结果。"""
+    text = "这是一条测试通知:如果你在通知中心看到它,说明站内通知正常"
+
+    async def go(ctx):  # type: ignore[no-untyped-def]
+        await ctx.conn.execute(
+            "INSERT INTO notifications(id, user_id, event, text, at, read, patent_id) VALUES(?,?,?,?,?,0,'')",
+            (new_id("n"), auth.id, "transition", text, now()))
+
+    await run(request, auth, go)
+    prefs = await get_prefs(db.reader, auth.id)  # type: ignore[arg-type]
+    cfg = await get_system(db.reader)  # type: ignore[arg-type]
+    url = cfg.get("webhookUrl") or settings.webhook_url
+    webhook = None
+    if url:
+        webhook = await probe(url, settings.webhook_secret, {
+            "event": "test", "text": text, "at": now(),
+            "recipients": [{"id": auth.id, "name": auth.user["name"], "email": auth.user["email"]}],
+        })
+    return {"inApp": True, "webhookConfigured": bool(url), "webhook": webhook,
+            "quietNow": in_quiet_hours(prefs["quietHours"], now()[11:16]), "quietHours": prefs["quietHours"],
+            "mutedEvents": [k for k, v in prefs["notifyEvents"].items() if v is False]}
 
 
 @router.patch("/users/{uid}")
@@ -115,6 +240,7 @@ async def put_config(body: dict[str, Any], request: Request, auth: Auth = Depend
         await save_system(ctx.conn, cfg)
 
     await run(request, auth, go)
+    await sync_webhook(request.app)  # 回调地址即时生效
     return {"ok": True}
 
 
@@ -273,6 +399,7 @@ async def bootstrap(auth: Auth = Depends(current_auth), db: Database = Depends(g
                   else await db.all("SELECT * FROM api_tokens WHERE user_id = ? ORDER BY created_at", (auth.id,)))
     cfg = await get_config(auth, db, settings)
     return {
+        "pendingRegistrations": await pending_for(db, me_, cfg),
         "me": me_,
         "users": await load_users(db.reader),  # type: ignore[arg-type]
         "teams": await teams_json(db),
