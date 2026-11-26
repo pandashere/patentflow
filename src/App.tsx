@@ -15,7 +15,7 @@ const isResetLinkAtLoad = /\/reset\/?$/.test(window.location.pathname) && new UR
 function Shell() {
   // 重置 / 激活链接优先进入设置新密码;设置完成或关闭对话框后退出该模式,正常进入系统
   const [resetMode, setResetMode] = useState(isResetLinkAtLoad)
-  const { loggedIn, prefs, ready, me } = useStore()
+  const { loggedIn, prefs, ready, me, refresh } = useStore()
   // 个人偏好(U6):默认着陆页;切换账号时回到该账号的着陆页
   const [page, setPage] = useState<Page>({ name: 'dashboard' })
   const [landedFor, setLandedFor] = useState('')
@@ -26,7 +26,8 @@ function Shell() {
 
   if (!ready) return <div className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">加载中…</div>
   // 重置 / 激活链接优先:即使浏览器里已有登录会话,也进入设置新密码
-  if (!loggedIn || resetMode) return <Login onResetDone={() => setResetMode(false)} />
+  // 重置完成后旧会话已失效:重新向服务端确认会话(成功重置 → 回到登录页;仅关闭对话框 → 保持登录)
+  if (!loggedIn || resetMode) return <Login onResetDone={() => { setResetMode(false); refresh() }} />
 
   return (
     <AppShell page={page} navigate={setPage}>

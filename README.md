@@ -22,7 +22,8 @@ cd server
 uv sync
 uv run pytest                                   # 后端测试
 PATENTFLOW_DB=./dev.db uv run patentflow --config ../patentflow.config.example.yaml seed   # 导入演示数据(密码 demo1234)
-PATENTFLOW_DB=./dev.db PATENTFLOW_DEMO=1 PATENTFLOW_ADMIN_PASSWORD='换成你的密码' \
+# PATENTFLOW_PUBLIC_URL 指向前端开发地址,重置 / 激活链接才能在开发环境中打开
+PATENTFLOW_DB=./dev.db PATENTFLOW_DEMO=1 PATENTFLOW_PUBLIC_URL=http://localhost:5173 PATENTFLOW_ADMIN_PASSWORD='换成你的密码' \
   uv run patentflow --config ../patentflow.config.example.yaml serve --port 8000
 
 # 前端(另开终端,/api 自动代理到 8000)

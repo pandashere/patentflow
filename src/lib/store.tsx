@@ -115,6 +115,7 @@ type ExtResult = 'applied' | 'pending' | { error: string }
 interface Store {
   ready: boolean
   loggedIn: boolean
+  refresh: () => Promise<void> // 重新向服务端确认会话并拉取数据
   providers: Providers
   error: string | null
   clearError: () => void
@@ -386,6 +387,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const store: Store = {
     ready, loggedIn: !!b, providers, error, clearError: () => setError(null),
+    refresh: () => reload().catch(() => setBoot(null)),
     notice, clearNotice: () => setNotice(null),
     conflict,
     resolveConflict: async (keep) => {
