@@ -187,11 +187,12 @@ def test_personal_notify_test_and_preview(client) -> None:  # type: ignore[no-un
     assert any("测试通知" in n["text"] for n in client.get("/api/notifications", headers=H("u1")).json())
     pid = mk(client)["id"]
     client.put("/api/me/prefs", json={"notifyEvents": {"review": True, "due": True, "transition": False}}, headers=H("pl1"))
-    cfg = [{"stage": "draft", "userIds": ["r1"], "includePl": True, "includeOwner": True, "events": ["transition"]}]
+    cfg = [{"stage": "draft", "userIds": ["u2", "r1"], "includePl": True, "includeOwner": True, "events": ["transition"]}]
     rows = client.post(f"/api/patents/{pid}/notification-settings/preview",
                        json={"event": "transition", "config": cfg}, headers=H("u1")).json()["recipients"]
     by = {x["id"]: x for x in rows}
-    assert by["u1"]["delivered"] and by["r1"]["delivered"]
+    assert by["u1"]["delivered"] and by["u2"]["delivered"]
+    assert by["r1"]["delivered"] is False and "无权" in by["r1"]["reason"]  # 外组成员看不到团队专利
     assert by["pl1"]["delivered"] is False and "关闭" in by["pl1"]["reason"]
     # 预演不产生真实通知
     assert all("draft" not in n["text"] for n in client.get("/api/notifications", headers=H("r1")).json())

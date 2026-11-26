@@ -60,7 +60,7 @@ export function DraftPane({ patent, editable }: PaneProps) {
           <label className="ui-label text-slate-500" htmlFor="f-bg">背景</label>
           <textarea
             id="f-bg" rows={4} disabled={!editable}
-            value={form.background}
+            value={editable ? form.background : d.background}
             onChange={(e) => setForm({ ...form, background: e.target.value })}
             className={fieldCls}
             placeholder="现有技术的问题、场景与痛点……"
@@ -70,7 +70,7 @@ export function DraftPane({ patent, editable }: PaneProps) {
           <label className="ui-label text-slate-500" htmlFor="f-cls">分类(自由文本,带词表联想)</label>
           <input
             id="f-cls" disabled={!editable}
-            value={form.classification}
+            value={editable ? form.classification : d.classification}
             onChange={(e) => setForm({ ...form, classification: e.target.value })}
             className={fieldCls}
             placeholder="技术领域关键词 / IPC 分类号,自由填写"
@@ -85,7 +85,7 @@ export function DraftPane({ patent, editable }: PaneProps) {
           <label className="ui-label text-slate-500" htmlFor="f-idea">核心构思</label>
           <textarea
             id="f-idea" rows={4} disabled={!editable}
-            value={form.idea}
+            value={editable ? form.idea : d.idea}
             onChange={(e) => setForm({ ...form, idea: e.target.value })}
             className={fieldCls}
             placeholder="本方案的核心创新点……"
@@ -116,7 +116,8 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
   const myAssignment = d.reviewers.find((r) => r.userId === me.id)
   const [editingReview, setEditingReview] = useState(false)
   // 提交后、本轮结束前可修改意见
-  const showForm = inStage && !!myAssignment && !myAssignment.declined && (!myAssignment.score || editingReview)
+  const showForm = inStage && !!myAssignment && !myAssignment.declined && patent.ownerId !== me.id
+    && (!myAssignment.score || editingReview)
   const passCount = reviewPassCount(patent)
   const rejected = reviewRejected(patent)
   const gateOpen = !rejected && passCount >= config.reviewPassCount
@@ -154,7 +155,7 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
           <label className="ui-label text-slate-500" htmlFor="f-sum">审查摘要</label>
           <textarea
             id="f-sum" rows={5} disabled={!editable}
-            value={summary}
+            value={editable ? summary : d.summary}
             onChange={(e) => setSummary(e.target.value)}
             className={fieldCls}
             placeholder="创新点提炼、初步检索结论……"
@@ -188,8 +189,8 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
               ))
             ) : (
               <>
-                <ScoreBars values={dimKeys.map((k) => self[k])} labels={dimLabels} color="#64748b" />
-                <p className="text-xs leading-relaxed text-slate-600">{self.comment || '未填写自评意见'}</p>
+                <ScoreBars values={dimKeys.map((k) => d.selfAssessment[k])} labels={dimLabels} color="#64748b" />
+                <p className="text-xs leading-relaxed text-slate-600">{d.selfAssessment.comment || '未填写自评意见'}</p>
               </>
             )}
           </div>

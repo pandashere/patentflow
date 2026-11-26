@@ -89,7 +89,15 @@ async def notify(
     if only is not None:
         ids = list(only)
     else:
-        ids = await resolve_recipients(ctx, event, patent) + list(extra)
+        resolved = await resolve_recipients(ctx, event, patent)
+        if patent is not None:
+            # 按专利当前状态复核:配置里列出、但已看不到这件专利的人(如可见性收紧后的外组成员)不再投递
+            from .access import can_see
+
+            info = {u["id"]: u for u in await _users(ctx, resolved)}
+            resolved = [i for i in resolved if i in info and can_see(
+                {"id": i, "role": info[i]["role"], "teamId": info[i]["team_id"]}, patent)]
+        ids = resolved + list(extra)
         if patent is not None and patent["visibility"] == "private":
             allowed = {patent["ownerId"], *patent["collaborators"]}
             ids = [i for i in ids if i in allowed]
@@ -124,7 +132,12 @@ async def explain_recipients(ctx: Ctx, event: str, patent: dict[str, Any]) -> li
     ids = list(dict.fromkeys(await resolve_recipients(ctx, event, patent)))
     hhmm = now()[11:16]
     out = []
+    from .access import can_see
+
     for u in await _users(ctx, ids):
+        if not can_see({"id": u["id"], "role": u["role"], "teamId": u["team_id"]}, patent):
+            out.append({"id": u["id"], "name": u["name"], "delivered": False, "reason": "已无权查看该专利,不会投递"})
+            continue
         prefs = await get_prefs(ctx.conn, u["id"])
         if prefs["notifyEvents"].get(event, True) is False:
             out.append({"id": u["id"], "name": u["name"], "delivered": False, "reason": "本人已在个人中心关闭该类通知"})

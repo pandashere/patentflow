@@ -388,7 +388,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const store: Store = {
     ready, loggedIn: !!b, providers, error, clearError: () => setError(null),
-    refresh: () => reload().catch(() => setBoot(null)),
+    // reload 内部已处理 401(清空登录态);网络错误 / 5xx 保留当前页面,只提示
+    refresh: () => reload().catch(() => setError('网络异常,数据未能刷新,请稍后重试')),
     notice, clearNotice: () => setNotice(null),
     conflict,
     resolveConflict: async (keep) => {

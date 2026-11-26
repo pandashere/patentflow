@@ -259,6 +259,7 @@ export interface SystemConfig {
   notifyDefaults: Record<NotifyEvent, { owner: boolean; pl: boolean; gl: boolean }>
   // 成员管理:是否开放自助注册;本组 PL 能否添加成员、审批注册(GL 与系统管理员始终可以)
   members: { selfRegistration: boolean; plCanManage: boolean }
+  tokenTtlDaysMax?: number // 部署配置的 Token 最长有效期(只读)
   overdue: OverduePolicy
 }
 

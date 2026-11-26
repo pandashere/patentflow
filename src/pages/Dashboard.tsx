@@ -50,7 +50,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
 
   // 待我审查:当前处于审查阶段、我是本轮 reviewer、未提交且未拒绝
   const myReviews = patents
-        .filter((p) => p.stage === 'patentability' && !p.archived)
+        .filter((p) => p.stage === 'patentability' && !p.archived && p.ownerId !== me.id)
         .map((p) => ({ p, a: p.stageData.patentability.reviewers.find((r) => r.userId === me.id && !r.score && !r.declined) }))
         .filter((x) => !!x.a)
         .sort((a, b) => (a.a!.dueDate ?? '').localeCompare(b.a!.dueDate ?? ''))

@@ -174,6 +174,8 @@ async def save_rule(ctx: Ctx, rule: dict[str, Any]) -> str:
     if existing:
         if me["role"] == "pl" and existing["team_id"] != me["teamId"]:
             raise forbidden("PL 只能管理本组规则")
+        if rule.get("updatedAt") and rule["updatedAt"] != existing["updated_at"]:
+            raise conflict("该规则已被他人修改,请关闭后重新打开再编辑", reason="stale_rule")
         async with ctx.conn.execute("SELECT status FROM cycles WHERE id = ?", (existing["cycle_id"],)) as cur:
             old_cycle = await cur.fetchone()
         if old_cycle and old_cycle["status"] == "closed":

@@ -228,6 +228,10 @@ async def get_config(auth: Auth = Depends(current_auth), db: Database = Depends(
                      settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     cfg = await get_system(db.reader)  # type: ignore[arg-type]
     cfg["ssoProviders"] = [{"name": p.name, "issuer": p.issuer, "enabled": p.enabled} for p in settings.sso_providers]
+    if auth.user["role"] != "gl":
+        # 回调地址常内嵌 IM 机器人密钥:只给维护它的 GL,其他人只知道是否已配置
+        cfg["webhookUrl"] = "(已配置)" if cfg.get("webhookUrl") else ""
+    cfg["tokenTtlDaysMax"] = settings.token_ttl_days_max
     return cfg
 
 

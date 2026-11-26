@@ -27,7 +27,10 @@ function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; labe
 }
 
 export default function Profile() {
-  const { me, prefs, savePrefs, updateProfile, tokens, createToken, revokeToken, changePassword } = useStore()
+  const { me, prefs, savePrefs, updateProfile, tokens, createToken, revokeToken, changePassword, config } = useStore()
+  // 有效期选项不超过部署配置的上限
+  const ttlMax = config.tokenTtlDaysMax ?? 365
+  const ttlOptions = [...new Set([7, 30, 90, 365].filter((d) => d <= ttlMax).concat(ttlMax < 7 ? [ttlMax] : []))]
   const [name, setName] = useState(me.name)
   const [email, setEmail] = useState(me.email)
   const [saved, setSaved] = useState(false)
@@ -38,7 +41,7 @@ export default function Profile() {
 
   // Token 创建
   const [tkName, setTkName] = useState('')
-  const [tkDays, setTkDays] = useState(90)
+  const [tkDays, setTkDays] = useState(() => Math.min(90, config.tokenTtlDaysMax ?? 365))
   const [tkScope, setTkScope] = useState<ApiToken['scope']>('read')
   const [freshToken, setFreshToken] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -145,9 +148,7 @@ export default function Profile() {
               className="rounded-md border bg-white px-2.5 py-2 text-[13px] outline-none focus:border-teal-600"
               aria-label="有效期"
             >
-              <option value={30}>30 天有效</option>
-              <option value={90}>90 天有效</option>
-              <option value={365}>1 年有效</option>
+              {ttlOptions.map((d) => <option key={d} value={d}>{d === 365 ? '1 年' : `${d} 天`}有效</option>)}
             </select>
             <select
               value={tkScope}

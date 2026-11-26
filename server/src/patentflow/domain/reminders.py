@@ -51,7 +51,7 @@ async def run_reminders(db: Database, settings: Settings, notifier: Notifier) ->
             if p["stage"] == "patentability":
                 rnd = p["stageData"]["patentability"]["round"]
                 for r in p["stageData"]["patentability"]["reviewers"]:
-                    if r.get("score") or r.get("declined") or not r.get("dueDate"):
+                    if r.get("score") or r.get("declined") or not r.get("dueDate") or r["userId"] == p["ownerId"]:
                         continue
                     left = days_between(today(), r["dueDate"])
                     if left in (await get_prefs(ctx.conn, r["userId"]))["dueReminderDays"] and await _once(
