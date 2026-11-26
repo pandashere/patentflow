@@ -9,6 +9,8 @@ export default defineConfig({
   plugins: [inspectAttr(), react()],
   server: {
     port: 3000,
+    // 开发时把 API 请求转发到后端(patentflow serve 默认 8000)
+    proxy: { '/api': 'http://127.0.0.1:8000' },
   },
   resolve: {
     alias: {

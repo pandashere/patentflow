@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
-import { computeKpi, firstReach, teamName, today, useStore } from '@/lib/store'
+import { firstReach, teamName, today, useStore } from '@/lib/store'
 import { TEAMS } from '@/lib/data'
 import { STAGES, stageLabel, type KpiRule, type KpiScoring, type StageKey } from '@/lib/types'
 import { SectionTitle, StagePill } from '@/components/pf'
 import { Check, Code2, Pause, Pencil, Play, Plus, X } from 'lucide-react'
 
 export default function Kpi() {
-  const { me, kpiRules, patents, transitions, saveKpiRule, toggleKpiRule, userById, cycles, config, snapshots, activeCycle } = useStore()
+  const { me, kpiRules, saveKpiRule, toggleKpiRule, userById, cycles, activeCycle, kpiReport } = useStore()
   const canManage = me.role === 'gl' || me.role === 'pl'
   const [editing, setEditing] = useState<KpiRule | null>(null)
   const [openReport, setOpenReport] = useState<string | null>(null)
@@ -58,11 +58,8 @@ export default function Kpi() {
       <div className="space-y-4">
         {myRules.map((r) => {
           const rc = cycles.find((c) => c.id === r.cycleId)
-          const snap = snapshots.find((s) => s.ruleId === r.id)
-          // 周期已收口:展示冻结快照,不再实时计算
-          const report = rc?.status === 'closed' && snap
-            ? { rule: r, items: snap.items, overall: snap.overall }
-            : computeKpi(r, patents, transitions, cycles, config)
+          // 后端计算;周期已收口时返回冻结快照
+          const report = kpiReport(r)
           const frozen = rc?.status === 'closed'
           const pct = Math.round(report.overall * 100)
           const open = openReport === r.id
@@ -98,7 +95,7 @@ export default function Kpi() {
                 <div className="text-right">
                   <div className={cn('font-mono-x text-2xl font-bold', r.enabled ? 'text-teal-700' : 'text-slate-400')}>{pct}%</div>
                   <div className="text-[10px] text-muted-foreground">
-                    {r.scoring.mode === 'tiered' ? `达成 ${'fullyAchieved' in report ? report.fullyAchieved : report.items.filter((i) => i.score === 1).length} 件 · 档位得分` : '平均达成率'}
+                    {r.scoring.mode === 'tiered' ? `达成 ${report.fullyAchieved} 件 · 档位得分` : '平均达成率'}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -449,10 +446,10 @@ function ScoringEditor({ scoring, onChange }: { scoring: KpiScoring; onChange: (
 
 // —— 我的贡献:我名下(负责人/共同发明人)哪些专利计入 KPI、每件还差哪个节点 ——
 function MyContribution() {
-  const { me, kpiRules, patents, transitions, cycles, config } = useStore()
+  const { me, kpiRules, transitions, cycles, kpiReport } = useStore()
   const rules = kpiRules.filter((r) => r.enabled && (r.scope.type === 'global' || r.scope.teamId === me.teamId))
   const rows = rules.flatMap((r) => {
-    const report = computeKpi(r, patents, transitions, cycles, config)
+    const report = kpiReport(r)
     return report.items
       .filter((it) => it.ownerId === me.id || it.collaborators.includes(me.id))
       .map((it) => ({ r, it }))

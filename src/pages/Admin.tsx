@@ -822,9 +822,7 @@ function OffboardDialog({ userId, onClose }: { userId: string; onClose: () => vo
   const { patents, users, activeUsers, deactivateMember, userById } = useStore()
   const u = userById(userId)
   // 私有草案对 GL/PL 完全透明:这里只显示件数,不显示标题;指定接收人须由本人在个人中心提前转交
-  const allOwned = patents.filter((p) => p.ownerId === userId)
-  const owned = allOwned.filter((p) => p.visibility !== 'private')
-  const privateCount = allOwned.length - owned.length
+  const owned = patents.filter((p) => p.ownerId === userId && p.visibility !== 'private')
   const pendingReviews = patents.filter((p) => p.stageData.patentability.reviewers.some((r) => r.userId === userId && !r.score)).length
   const pl = users.find((x) => x.role === 'pl' && x.teamId === u.teamId && x.id !== userId)
   const [assign, setAssign] = useState<Record<string, string>>({})
@@ -841,13 +839,13 @@ function OffboardDialog({ userId, onClose }: { userId: string; onClose: () => vo
         label: missing ? `还有 ${missing} 件未指定接收人` : '确认交接并停用',
         tone: 'danger',
         disabled: missing > 0,
-        onClick: () => { if (deactivateMember(userId, assign) === 'ok') onClose() },
+        onClick: async () => { if ((await deactivateMember(userId, assign)) === 'ok') onClose() },
       }}
     >
       <ul className="mb-3 list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
         <li>名下 {owned.length} 件非私有专利,必须逐件指定接收人。</li>
         <li>
-          另有 {privateCount} 件私有草案(内容对你不可见)。本人可在个人中心「专利转交」中提前指定接收人;
+          其私有草案对你不可见(不显示件数与标题)。本人可在个人中心「专利转交」中提前指定接收人;
           停用时仍未转交的,将转为「团队可见」并交给本组 PL{pl ? `(${pl.name})` : ''}。
         </li>
         <li>停用后吊销其全部 API Token;撤销其 {pendingReviews} 个未提交的审查邀请,并通知相关发明人。</li>

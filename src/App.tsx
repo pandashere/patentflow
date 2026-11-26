@@ -10,10 +10,16 @@ import Admin from '@/pages/Admin'
 import Profile from '@/pages/Profile'
 
 function Shell() {
-  const { loggedIn, prefs } = useStore()
-  // 个人偏好(U6):默认着陆页
-  const [page, setPage] = useState<Page>(() => ({ name: prefs.homePage }) as Page)
+  const { loggedIn, prefs, ready, me } = useStore()
+  // 个人偏好(U6):默认着陆页;切换账号时回到该账号的着陆页
+  const [page, setPage] = useState<Page>({ name: 'dashboard' })
+  const [landedFor, setLandedFor] = useState('')
+  if (loggedIn && landedFor !== me.id) {
+    setLandedFor(me.id)
+    setPage({ name: prefs.homePage } as Page)
+  }
 
+  if (!ready) return <div className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">加载中…</div>
   if (!loggedIn) return <Login />
 
   return (

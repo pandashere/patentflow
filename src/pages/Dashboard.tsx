@@ -1,4 +1,4 @@
-import { useStore, computeKpi, computeStageTrend, monthRange, teamName, today, daysBetween } from '@/lib/store'
+import { useStore, computeStageTrend, monthRange, teamName, today, daysBetween } from '@/lib/store'
 import { STAGES, stageIndex, stageLabel, type Patent } from '@/lib/types'
 import { DueChip, RiskTag, SectionTitle, StagePill, StageTrendChart, ToneTag, VisibilityTag, STAGE_COLOR } from '@/components/pf'
 import type { Page } from '@/components/AppShell'
@@ -11,8 +11,8 @@ function daysUntil(d?: string) {
 
 export default function Dashboard({ navigate }: { navigate: (p: Page) => void }) {
   const {
-    me, persona, visiblePatents, kpiRules, patents, transitions, userById, cycles, config, activeCycle,
-    stageOverdueDays, closingRisk, reviewExtension, reviewRejected, canOperatePatent,
+    me, persona, visiblePatents, kpiRules, patents, transitions, userById, cycles, activeCycle,
+    stageOverdueDays, closingRisk, reviewExtension, reviewRejected, canOperatePatent, kpiReport,
   } = useStore()
   const visible = visiblePatents()
   const active = visible.filter((p) => !p.archived) // 归档专利退出流水线视图
@@ -374,7 +374,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
           />
           <div className="space-y-3">
             {myKpiRules.map((r) => {
-              const report = computeKpi(r, patents, transitions, cycles, config)
+              const report = kpiReport(r)
               const rc = cycles.find((c) => c.id === r.cycleId)
               const pct = Math.round(report.overall * 100)
               return (

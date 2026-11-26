@@ -339,8 +339,9 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => {
-                const r = submitReview(patent.id, { ...score, verdict: 'pass' })
+              onClick={async () => {
+                const r = await submitReview(patent.id, { ...score, verdict: 'pass' })
+                if (r === 'error') return
                 if (r === 'below-min') setBlockMsg(`加权均分低于下限 ${config.reviewMinWeighted},不能判「通过」—— 请提高评分或改判打回`)
                 else { setBlockMsg(''); setEditingReview(false) }
               }}
@@ -353,7 +354,7 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
               type="button"
               onClick={() => {
                 if (!score.comment.trim()) { setBlockMsg('打回时请填写审查意见'); return }
-                submitReview(patent.id, { ...score, verdict: 'reject' }); setBlockMsg(''); setEditingReview(false)
+                submitReview(patent.id, { ...score, verdict: 'reject' }).then((r) => { if (r === 'ok') { setBlockMsg(''); setEditingReview(false) } })
               }}
               className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
             >

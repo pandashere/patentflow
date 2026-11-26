@@ -553,7 +553,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
           onClose={close}
           confirm={{
             label: '永久删除', tone: 'danger', disabled: reason !== patent.code,
-            onClick: () => { if (store.deletePatent(patent.id)) navigate({ name: 'patents' }) },
+            onClick: async () => { if (await store.deletePatent(patent.id)) navigate({ name: 'patents' }) },
           }}
         >
           <p className="text-[13px] text-slate-600">
@@ -574,8 +574,8 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
           onClose={close}
           confirm={{
             label: '提交申请', tone: 'dark', disabled: !extDate || !reason.trim(),
-            onClick: () => {
-              const r = store.requestExtension(patent.id, extDate, reason.trim())
+            onClick: async () => {
+              const r = await store.requestExtension(patent.id, extDate, reason.trim())
               if (r === 'applied' || r === 'pending') close()
               else if (r === 'beyond-cycle') setExtMsg(`超出所属周期结束日(${cycle?.end})。跨周期项目请由 GL 标记。`)
               else setExtMsg('新截止日必须晚于当前截止日')

@@ -1,12 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '@/lib/store'
 import { KeyRound, MailQuestion, ScanFace, SquarePen, X } from 'lucide-react'
 
 // 登录页:本地账密 + SSO 入口(接口解耦演示)
 // 每个 SSO provider 对应后端 identity/provider 的一个实现,这里只做 UI 示意。
 export default function Login() {
-  const { setLoggedIn, config, login, requestPasswordReset, resetPassword } = useStore()
-  const [account, setAccount] = useState('chenxi@corp.local')
+  const { providers, login, requestPasswordReset, resetPassword } = useStore()
+  const [account, setAccount] = useState(providers.demo ? 'chenxi@corp.local' : '')
   const [password, setPassword] = useState('')
   const [loginMsg, setLoginMsg] = useState('')
   const [ssoHint, setSsoHint] = useState<string | null>(null)
@@ -21,7 +21,17 @@ export default function Login() {
   const [pwd2, setPwd2] = useState('')
   const [resetMsg, setResetMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const enabledSso = config.ssoProviders.filter((p) => p.enabled && p.issuer !== 'local')
+  const enabledSso = providers.sso.filter((p) => p.enabled && p.issuer !== 'local')
+  const [busy, setBusy] = useState(false)
+
+  // 邮件/IM 中的重置链接形如 /reset?token=…:打开后直接进入设置新密码
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('token')
+    if (t) {
+      setResetToken(t); setForgotOpen(true)
+      window.history.replaceState(null, '', window.location.pathname.replace(/reset\/?$/, ''))
+    }
+  }, [])
 
   return (
     <div className="flex min-h-dvh">
@@ -90,12 +100,12 @@ export default function Login() {
 
           <form
             className="mt-6 space-y-4"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault()
-              const r = login(account, password)
-              if (r === 'unknown') setLoginMsg('账号不存在')
-              else if (r === 'wrong') setLoginMsg('密码错误。忘记密码可通过下方「忘记密码」重置')
-              else setLoginMsg('')
+              setBusy(true)
+              const err = await login(account.trim(), password)
+              setBusy(false)
+              setLoginMsg(err ? `${err}。忘记密码可点击「忘记密码?」重置` : '')
             }}
           >
             <div>
@@ -128,13 +138,14 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="mt-1.5 w-full rounded-md border bg-white px-3 py-2.5 text-sm outline-none transition-shadow focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20"
-                placeholder="演示环境任意输入"
+                placeholder={providers.demo ? '演示账号密码:demo1234' : ''}
               />
             </div>
             {loginMsg && <p className="text-xs text-red-600">{loginMsg}</p>}
             <button
               type="submit"
-              className="flex w-full items-center justify-center gap-2 rounded-md bg-[#12141f] py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              disabled={busy || !account.trim() || !password}
+              className="flex w-full disabled:opacity-50 items-center justify-center gap-2 rounded-md bg-[#12141f] py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
             >
               <KeyRound className="size-4" />
               本地账号登录
@@ -168,9 +179,7 @@ export default function Login() {
               生产环境此处重定向到 <code className="font-mono-x text-[11px]">/auth/sso/{ssoHint}/begin</code>,
               回调返回 ExternalIdentity(issuer + subject)后按绑定策略匹配本地租户。
               新增 Provider 实现即可接入,业务代码零改动。
-              <button type="button" onClick={() => setLoggedIn(true)} className="mt-2 block font-medium text-teal-700 underline underline-offset-2">
-                模拟 SSO 登录成功 →
-              </button>
+              <span className="mt-2 block text-teal-800">当前尚未接入(SSO 设计待定)。</span>
             </div>
           )}
 
@@ -240,7 +249,10 @@ export default function Login() {
                   <button
                     type="button"
                     disabled={!forgotEmail.trim()}
-                    onClick={() => { setForgotLink(requestPasswordReset(forgotEmail)); setForgotSent(true) }}
+                    onClick={async () => {
+                      const r = await requestPasswordReset(forgotEmail.trim()).catch(() => null)
+                      setForgotLink(r?.demoLink ?? null); setForgotSent(true)
+                    }}
                     className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
                   >
                     发送重置链接
@@ -277,9 +289,9 @@ export default function Login() {
                   <button
                     type="button"
                     disabled={!pwd1 || !pwd2}
-                    onClick={() => {
+                    onClick={async () => {
                       if (pwd1 !== pwd2) { setResetMsg({ ok: false, text: '两次输入的新密码不一致' }); return }
-                      const r = resetPassword(resetToken, pwd1)
+                      const r = await resetPassword(resetToken, pwd1)
                       if (r === 'ok') setResetMsg({ ok: true, text: '密码已重置,token 已作废。请用新密码登录。' })
                       else if (r === 'weak') setResetMsg({ ok: false, text: '新密码至少 8 位' })
                       else if (r === 'expired') setResetMsg({ ok: false, text: '链接已过期,请重新申请' })

@@ -103,11 +103,12 @@ export default function Profile() {
               <button
                 type="button"
                 disabled={!pwd.old || !pwd.n1 || !pwd.n2}
-                onClick={() => {
-                  if (pwd.n1.length < 8) setPwdMsg({ ok: false, text: '新密码至少 8 位' })
-                  else if (pwd.n1 !== pwd.n2) setPwdMsg({ ok: false, text: '两次输入的新密码不一致' })
-                  else if (changePassword(pwd.old, pwd.n1) === 'wrong') setPwdMsg({ ok: false, text: '当前密码不正确' })
-                  else { setPwdMsg({ ok: true, text: '密码已更新,下次登录生效' }); setPwd({ old: '', n1: '', n2: '' }) }
+                onClick={async () => {
+                  if (pwd.n1.length < 8) { setPwdMsg({ ok: false, text: '新密码至少 8 位' }); return }
+                  if (pwd.n1 !== pwd.n2) { setPwdMsg({ ok: false, text: '两次输入的新密码不一致' }); return }
+                  const err = await changePassword(pwd.old, pwd.n1)
+                  if (err) setPwdMsg({ ok: false, text: err })
+                  else { setPwdMsg({ ok: true, text: '密码已更新,其他设备上的登录已失效' }); setPwd({ old: '', n1: '', n2: '' }) }
                 }}
                 className="rounded-md border px-4 py-2 text-[13px] font-medium hover:bg-slate-50 disabled:opacity-40"
               >
@@ -160,7 +161,7 @@ export default function Profile() {
             <button
               type="button"
               disabled={!tkName.trim()}
-              onClick={() => { setFreshToken(createToken(tkName.trim(), tkDays, tkScope)); setTkName(''); setCopied(false) }}
+              onClick={async () => { setFreshToken(await createToken(tkName.trim(), tkDays, tkScope)); setTkName(''); setCopied(false) }}
               className="flex items-center gap-1.5 rounded-md bg-teal-700 px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-40"
             >
               <Plus className="size-3.5" />

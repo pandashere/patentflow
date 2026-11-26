@@ -217,10 +217,10 @@ export default function PatentList({ navigate, initialStage }: { navigate: (p: P
               <button
                 type="button"
                 disabled={!newTitle.trim()}
-                onClick={() => {
-                  const id = createPatent(newTitle.trim(), newVis)
+                onClick={async () => {
+                  const id = await createPatent(newTitle.trim(), newVis)
                   setCreating(false)
-                  navigate({ name: 'patent', id })
+                  if (id) navigate({ name: 'patent', id })
                 }}
                 className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
               >

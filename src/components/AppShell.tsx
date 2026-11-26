@@ -37,7 +37,7 @@ export function AppShell({
   navigate: (p: Page) => void
   children: ReactNode
 }) {
-  const { me, persona, setPersona, notifications, markAllRead, setLoggedIn, prefs, visiblePatents } = useStore()
+  const { me, persona, setPersona, notifications, markAllRead, logout, prefs, visiblePatents, providers } = useStore()
   const [notifOpen, setNotifOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
   // 个人通知偏好(U3):被关掉的事件不进入通知流
@@ -153,7 +153,8 @@ export function AppShell({
           <div className="relative">
             <button
               type="button"
-              onClick={() => { setPersonaOpen((v) => !v); setNotifOpen(false) }}
+              onClick={() => { if (providers.demo) setPersonaOpen((v) => !v); setNotifOpen(false) }}
+              title={providers.demo ? '演示模式:切换身份视角' : undefined}
               className="flex items-center gap-2.5 rounded-md border py-1.5 pl-2 pr-2.5 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
             >
               <span className="flex size-6 items-center justify-center rounded bg-[#12141f] font-mono-x text-[10px] font-bold text-teal-400">
@@ -165,7 +166,7 @@ export function AppShell({
                   {persona.label}视角
                 </span>
               </span>
-              <ChevronsUpDown className="size-3.5 text-slate-400" />
+              {providers.demo && <ChevronsUpDown className="size-3.5 text-slate-400" />}
             </button>
             {personaOpen && (
               <>
@@ -203,7 +204,7 @@ export function AppShell({
 
           <button
             type="button"
-            onClick={() => setLoggedIn(false)}
+            onClick={() => logout()}
             className="flex size-9 items-center justify-center rounded-md border text-slate-500 transition-colors hover:bg-slate-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
             aria-label="退出登录"
             title="退出登录"
@@ -213,6 +214,67 @@ export function AppShell({
         </header>
 
         <main className="min-w-0 flex-1 px-6 py-6">{children}</main>
+        <ErrorToast />
+        <ConflictDialog />
+      </div>
+    </div>
+  )
+}
+
+// —— 全局错误提示:后端返回的业务错误(权限、门禁、冲突……)统一在这里展示 ——
+function ErrorToast() {
+  const { error, clearError } = useStore()
+  if (!error) return null
+  return (
+    <div role="alert" className="fixed bottom-5 right-5 z-[60] flex max-w-md items-start gap-3 rounded-lg border border-red-200 bg-white px-4 py-3 shadow-lg">
+      <span className="mt-1 size-2 shrink-0 rounded-full bg-red-500" />
+      <p className="flex-1 text-[13px] leading-relaxed text-slate-700">{error}</p>
+      <button type="button" onClick={clearError} className="text-xs text-slate-400 hover:text-slate-700" aria-label="关闭">关闭</button>
+    </div>
+  )
+}
+
+// —— 保存冲突:他人已更新同一阶段 → 对比后选择以谁为准 ——
+function ConflictDialog() {
+  const { conflict, resolveConflict, userById, versions } = useStore()
+  if (!conflict) return null
+  const latest = versions
+    .filter((v) => v.patentId === conflict.patentId && v.stage === conflict.stage)
+    .sort((a, b) => b.version - a.version)[0]
+  const keys = [...new Set([...Object.keys(conflict.mine), ...Object.keys(conflict.theirs)])]
+    .filter((k) => typeof (conflict.mine[k] ?? conflict.theirs[k]) === 'string')
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/30 p-4">
+      <div role="dialog" aria-modal="true" className="scrollbar-thin max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
+        <h3 className="font-bold">保存冲突</h3>
+        <p className="mt-1 text-[13px] text-slate-600">
+          在你编辑期间,{latest ? `${userById(latest.authorId).name} 于 ${latest.at} ` : '他人'}已更新了这个阶段(当前 v{conflict.currentVersion})。
+        </p>
+        <div className="mt-3 space-y-3">
+          {keys.map((k) => {
+            const a = String(conflict.mine[k] ?? '')
+            const b = String(conflict.theirs[k] ?? '')
+            if (a === b) return null
+            return (
+              <div key={k}>
+                <div className="mb-1 text-xs font-medium text-slate-500">{k}</div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="whitespace-pre-wrap rounded-md border border-teal-200 bg-teal-50/60 p-2.5 text-xs leading-relaxed">{a || '(空)'}</div>
+                  <div className="whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-2.5 text-xs leading-relaxed">{b || '(空)'}</div>
+                </div>
+              </div>
+            )
+          })}
+          <p className="text-[11px] text-slate-400">左:你的修改;右:当前已保存的内容。无论选择哪个,历史版本都不会丢失。</p>
+        </div>
+        <div className="mt-4 flex justify-end gap-2 border-t pt-3">
+          <button type="button" onClick={() => resolveConflict('theirs')} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
+            放弃我的修改
+          </button>
+          <button type="button" onClick={() => resolveConflict('mine')} className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90">
+            以我的为准(生成新版本)
+          </button>
+        </div>
       </div>
     </div>
   )
