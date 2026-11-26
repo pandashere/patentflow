@@ -15,7 +15,7 @@ from .constants import STAGE_FIELDS, STAGE_KEYS, VIS_LABEL, VISIBILITIES, stage_
 from .ctx import Ctx
 from .errors import bad_request, conflict, forbidden, not_found
 from .notifications import notify
-from .reviews import gate_open, next_round, rejected
+from .reviews import gate_open, next_round, notify_new_round, rejected
 
 
 async def _next_code(ctx: Ctx) -> str:
@@ -132,12 +132,15 @@ async def advance(ctx: Ctx, pid: str, reason: str, rev: int | None = None) -> st
             "INSERT OR IGNORE INTO review_rounds(patent_id, round, closed_at, outcome) VALUES(?,?,?, 'passed')",
             (pid, p["stageData"]["patentability"]["round"], now()),
         )
+    new_round = False
     if nxt == "patentability":
-        await next_round(ctx, p, "rejected" if rejected(p) else "superseded")
+        new_round = await next_round(ctx, p, "rejected" if rejected(p) else "superseded")
     await bump(ctx, pid, rev, stage=nxt, due_dates=due_dates)
     await add_transition(ctx, pid, p["stage"], nxt, "advance", reason.strip())
     p["stage"] = nxt
     await notify(ctx, "transition", f"《{p['title']}》已推进至「{label(nxt)}」", p)
+    if new_round:
+        await notify_new_round(ctx, p)
     return nxt
 
 
@@ -150,13 +153,16 @@ async def rollback(ctx: Ctx, pid: str, to: str, reason: str, rev: int | None = N
     skipped = STAGE_KEYS[stage_index(to) + 1: stage_index(p["stage"]) + 1]
     recheck = list(dict.fromkeys([*p["needsRecheck"], *skipped]))
     await void_pending_extensions(ctx, pid)
+    new_round = False
     if to == "patentability":
         # 从后续阶段回到审查:上一轮已通过并结束,不能沿用旧票,开启新一轮(名单继承、分数清零)
-        await next_round(ctx, p, "superseded")
+        new_round = await next_round(ctx, p, "superseded")
     await bump(ctx, pid, rev, stage=to, needs_recheck=recheck)
     await add_transition(ctx, pid, p["stage"], to, "rollback", reason.strip())
     p["stage"] = to
     await notify(ctx, "transition", f"《{p['title']}》已回退至「{label(to)}」:{reason.strip()}", p)
+    if new_round:
+        await notify_new_round(ctx, p)
 
 
 async def set_visibility(ctx: Ctx, pid: str, v: str) -> None:
@@ -281,7 +287,7 @@ async def migrate_team(ctx: Ctx, pid: str, team_id: str) -> None:
     p = await get_operable(ctx, pid)
     if not access.is_team_manager(ctx.me, p) or p["visibility"] == "private":
         raise forbidden("仅原组 PL 或 GL 可迁移团队")
-    async with ctx.conn.execute("SELECT name FROM teams WHERE id = ?", (team_id,)) as cur:
+    async with ctx.conn.execute("SELECT name FROM teams WHERE id = ? AND archived_at IS NULL", (team_id,)) as cur:
         t = await cur.fetchone()
     if not t:
         raise bad_request("团队不存在")

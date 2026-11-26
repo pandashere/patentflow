@@ -251,7 +251,7 @@ function KpiEditor({
                 className="mt-1.5 w-full rounded-md border bg-white px-2.5 py-2 text-sm outline-none focus:border-teal-600 disabled:bg-slate-50"
               >
                 {isGl && <option value="global">全员</option>}
-                {TEAMS.map((t) => (
+                {TEAMS.filter((t) => !t.archived).map((t) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>

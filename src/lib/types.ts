@@ -33,6 +33,7 @@ export interface Team {
   id: string
   name: string
   plId: string | null
+  archived?: boolean // 已停用的团队:只用于显示历史引用的名称,不出现在任何选择列表
 }
 
 export interface StageInfo {

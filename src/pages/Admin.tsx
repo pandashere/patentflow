@@ -118,7 +118,7 @@ export default function Admin() {
                           className={cn(inputCls, 'py-1 text-xs')}
                           aria-label={`${u.name} 的团队`}
                         >
-                          {TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          {TEAMS.filter((t) => !t.archived).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
                       ) : (
                         <span className="text-[13px] text-muted-foreground">{teamName(u.teamId)}</span>

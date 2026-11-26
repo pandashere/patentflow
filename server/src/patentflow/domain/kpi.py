@@ -18,7 +18,18 @@ from .ctx import Ctx
 from .errors import bad_request, conflict, forbidden, not_found
 
 
-def in_scope(p: dict[str, Any], rule: dict[str, Any], cycle: dict[str, Any] | None, cfg: dict[str, Any]) -> bool:
+def archived_through(trs: list[dict[str, Any]], start: str, end: str) -> bool:
+    """按归档 / 恢复流转回放:周期开始时处于归档状态,且周期内没有恢复 → 整个周期都不活跃。"""
+    events = sorted((t for t in trs if t["kind"] in ("archive", "unarchive")), key=lambda t: t["at"])
+    archived = False
+    for e in events:
+        if e["at"][:10] < start:
+            archived = e["kind"] == "archive"
+    return archived and not any(e["kind"] == "unarchive" and start <= e["at"][:10] <= end for e in events)
+
+
+def in_scope(p: dict[str, Any], rule: dict[str, Any], cycle: dict[str, Any] | None, cfg: dict[str, Any],
+             trs: list[dict[str, Any]] | None = None) -> bool:
     if not cycle or p["visibility"] == "private" or p["createdAt"] > cycle["end"]:
         return False
     arch = p.get("archived")
@@ -27,6 +38,8 @@ def in_scope(p: dict[str, Any], rule: dict[str, Any], cycle: dict[str, Any] | No
         return False
     if arch and arch["at"][:10] < cycle["start"]:
         return False
+    if trs is not None and archived_through(trs, cycle["start"], cycle["end"]):
+        return False  # 期后才恢复归档的专利,在本周期内始终处于归档,不计入分母
     if p["crossCycle"] and not cfg["overdue"]["includeCrossCycleInKpi"]:
         return False
     if rule["scope"]["type"] == "team" and p["teamId"] != rule["scope"].get("teamId"):
@@ -47,7 +60,7 @@ def compute(rule: dict[str, Any], patents: list[dict[str, Any]], transitions: li
         by_patent[t["patentId"]].append(t)
     items = []
     for p in patents:
-        if not in_scope(p, rule, cycle, cfg):
+        if not in_scope(p, rule, cycle, cfg, by_patent[p["id"]]):
             continue
         achieved = []
         for t in rule["targets"]:

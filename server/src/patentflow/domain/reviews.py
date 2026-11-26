@@ -65,6 +65,20 @@ async def next_round(ctx: Ctx, p: dict[str, Any], outcome: str) -> bool:
     return True
 
 
+async def notify_new_round(ctx: Ctx, p: dict[str, Any]) -> None:
+    """新一轮开始:通知实际被继承到新一轮的 reviewer 重新评审。"""
+    async with ctx.conn.execute(
+        "SELECT review_round FROM patents WHERE id = ?", (p["id"],)
+    ) as cur:
+        rnd = (await cur.fetchone())["review_round"]
+    async with ctx.conn.execute(
+        "SELECT user_id FROM review_assignments WHERE patent_id = ? AND round = ?", (p["id"], rnd)
+    ) as cur:
+        ids = [r["user_id"] for r in await cur.fetchall()]
+    if ids:
+        await notify(ctx, "review", f"《{p['title']}》开始第 {rnd} 轮审查,请重新评审", only=ids)
+
+
 def _in_review(p: dict[str, Any]) -> None:
     if p["archived"] or p["stage"] != "patentability":
         raise conflict("专利当前不在可专利性审查阶段")
@@ -172,7 +186,5 @@ async def start_new_round(ctx: Ctx, pid: str) -> int:
     if not await next_round(ctx, p, outcome):
         raise conflict("本轮还没有任何提交,无需发起新一轮")
     await bump(ctx, pid)
-    rnd = p["stageData"]["patentability"]["round"] + 1
-    await notify(ctx, "review", f"《{p['title']}》发起第 {rnd} 轮审查,请 reviewer 重新评审", p,
-                 extra=[r["userId"] for r in p["stageData"]["patentability"]["reviewers"] if not r.get("declined")])
-    return rnd
+    await notify_new_round(ctx, p)
+    return p["stageData"]["patentability"]["round"] + 1

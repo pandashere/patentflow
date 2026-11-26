@@ -94,6 +94,11 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
     { label: '共同发明人', icon: Users, onClick: () => open({ kind: 'collab' }), show: operable },
     { label: '转交专利', icon: ArrowRightLeft, onClick: () => { setTransferTo(''); setKeepCollab(true); open({ kind: 'transfer' }) }, show: operable },
     { label: '申请延期', icon: CalendarClock, onClick: () => { setExtDate(''); setExtMsg(''); open({ kind: 'extension' }) }, show: operable && !!patent.dueDates[patent.stage] },
+    {
+      label: overdueDays > 0 ? `催办(已逾期 ${overdueDays} 天)` : '催办负责人', icon: Bell,
+      onClick: () => { store.nudge(patent.id); setMenuOpen(false) },
+      show: !patent.archived && isManagerOfTeam && patent.ownerId !== me.id,
+    },
     { label: '迁移团队', icon: Building2, onClick: () => { setMigrateTo(''); open({ kind: 'migrate' }) }, show: operable && isManagerOfTeam },
     { label: patent.crossCycle ? '取消跨周期标记' : '标记为跨周期', icon: CalendarClock, onClick: () => { store.toggleCrossCycle(patent.id); setMenuOpen(false) }, show: operable && me.role === 'gl' },
     { label: '归档', icon: Archive, onClick: () => { setArchiveKind(curIdx >= stageIndex('doi') ? 'completed' : 'abandoned'); open({ kind: 'archive' }) }, show: operable },
@@ -545,7 +550,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             className="mt-3 w-full rounded-md border bg-white px-3 py-2.5 text-sm outline-none focus:border-teal-600"
           >
             <option value="">选择目标团队…</option>
-            {TEAMS.filter((t) => t.id !== patent.teamId).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            {TEAMS.filter((t) => t.id !== patent.teamId && !t.archived).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </Modal>
       )}

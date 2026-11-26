@@ -145,7 +145,8 @@ async def overview(admin: str = Depends(current_admin), db: Database = Depends(g
     sessions = {r["user_id"]: r["n"] for r in await db.all(
         """SELECT s.user_id, COUNT(*) n FROM sessions s JOIN users u ON u.id = s.user_id
            WHERE s.expires_at > ? AND s.epoch = u.session_epoch GROUP BY s.user_id""", (now(),))}
-    teams = [{"id": t["id"], "name": t["name"], "plId": t["pl_id"]} for t in await db.all("SELECT * FROM teams ORDER BY id")]
+    teams = [{"id": t["id"], "name": t["name"], "plId": t["pl_id"]}
+             for t in await db.all("SELECT * FROM teams WHERE archived_at IS NULL ORDER BY id")]
     return {
         "users": [{**u, "hasPassword": pw.get(u["id"], False), "activeTokens": tokens.get(u["id"], 0),
                    "activeSessions": sessions.get(u["id"], 0)} for u in users],
@@ -228,7 +229,7 @@ async def patch_user(uid: str, body: PatchIn, request: Request, admin: str = Dep
     if body.role and body.role != u["role"]:
         sets["role"] = body.role
     if body.teamId and body.teamId != u["teamId"]:
-        if not await db.one("SELECT 1 FROM teams WHERE id = ?", (body.teamId,)):
+        if not await db.one("SELECT 1 FROM teams WHERE id = ? AND archived_at IS NULL", (body.teamId,)):
             raise bad_request("团队不存在")
         sets["team_id"] = body.teamId
     if sets:
@@ -248,7 +249,7 @@ async def create_user(body: UserIn, request: Request, admin: str = Depends(curre
     email = body.email.strip().lower()
     if body.role not in ROLES or "@" not in email:
         raise bad_request("请填写有效邮箱与角色")
-    if not await db.one("SELECT 1 FROM teams WHERE id = ?", (body.teamId,)):
+    if not await db.one("SELECT 1 FROM teams WHERE id = ? AND archived_at IS NULL", (body.teamId,)):
         raise bad_request("团队不存在")
     if await db.one("SELECT 1 FROM users WHERE email = ?", (email,)):
         raise conflict("该邮箱已存在")

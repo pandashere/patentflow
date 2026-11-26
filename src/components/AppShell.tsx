@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { PERSONAS, useStore } from '@/lib/store'
 import { NOTIFY_EVENT_LABEL } from '@/lib/types'
@@ -222,7 +222,20 @@ export function AppShell({
 
 // —— 全局错误提示:后端返回的业务错误(权限、门禁、冲突……)统一在这里展示 ——
 function ErrorToast() {
-  const { error, clearError } = useStore()
+  const { error, clearError, notice, clearNotice } = useStore()
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(clearNotice, 3000)
+    return () => clearTimeout(t)
+  }, [notice, clearNotice])
+  if (!error && notice) {
+    return (
+      <div role="status" className="fixed bottom-5 right-5 z-[60] flex max-w-md items-center gap-3 rounded-lg border border-teal-200 bg-white px-4 py-3 shadow-lg">
+        <span className="size-2 shrink-0 rounded-full bg-teal-500" />
+        <p className="text-[13px] text-slate-700">{notice}</p>
+      </div>
+    )
+  }
   if (!error) return null
   return (
     <div role="alert" className="fixed bottom-5 right-5 z-[60] flex max-w-md items-start gap-3 rounded-lg border border-red-200 bg-white px-4 py-3 shadow-lg">
@@ -240,8 +253,28 @@ function ConflictDialog() {
   const latest = versions
     .filter((v) => v.patentId === conflict.patentId && v.stage === conflict.stage)
     .sort((a, b) => b.version - a.version)[0]
-  const keys = [...new Set([...Object.keys(conflict.mine), ...Object.keys(conflict.theirs)])]
-    .filter((k) => typeof (conflict.mine[k] ?? conflict.theirs[k]) === 'string')
+  // 展平一层嵌套(如审查自评的各维度分数),逐项对比
+  const flat = (o: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(o ?? {})) {
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
+          if (sk !== 'submittedAt' && sk !== 'verdict') out[`${k}.${sk}`] = sv
+        }
+      } else out[k] = v
+    }
+    return out
+  }
+  const mine = flat(conflict.mine)
+  const theirs = flat(conflict.theirs)
+  const LABEL: Record<string, string> = {
+    'selfAssessment.difficulty': '自评 · 技术难度', 'selfAssessment.nonObviousness': '自评 · 非显而易见性',
+    'selfAssessment.novelty': '自评 · 创新性', 'selfAssessment.comment': '自评 · 意见', summary: '审查摘要',
+    background: '背景', classification: '分类', idea: '核心构思', markdown: '正文', title: '标题', authors: '作者',
+    venue: '目标期刊 / 会议', abstractDraft: '摘要草稿',
+  }
+  const keys = [...new Set([...Object.keys(mine), ...Object.keys(theirs)])]
+    .filter((k) => ['string', 'number'].includes(typeof (mine[k] ?? theirs[k])))
   return (
     <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/30 p-4">
       <div role="dialog" aria-modal="true" className="scrollbar-thin max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
@@ -251,12 +284,12 @@ function ConflictDialog() {
         </p>
         <div className="mt-3 space-y-3">
           {keys.map((k) => {
-            const a = String(conflict.mine[k] ?? '')
-            const b = String(conflict.theirs[k] ?? '')
+            const a = String(mine[k] ?? '')
+            const b = String(theirs[k] ?? '')
             if (a === b) return null
             return (
               <div key={k}>
-                <div className="mb-1 text-xs font-medium text-slate-500">{k}</div>
+                <div className="mb-1 text-xs font-medium text-slate-500">{LABEL[k] ?? k}</div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div className="whitespace-pre-wrap rounded-md border border-teal-200 bg-teal-50/60 p-2.5 text-xs leading-relaxed">{a || '(空)'}</div>
                   <div className="whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-2.5 text-xs leading-relaxed">{b || '(空)'}</div>

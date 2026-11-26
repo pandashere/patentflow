@@ -10,6 +10,8 @@ import Admin from '@/pages/Admin'
 import Profile from '@/pages/Profile'
 import SysAdmin from '@/pages/SysAdmin'
 
+const isResetLink = /\/reset\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has('token')
+
 function Shell() {
   const { loggedIn, prefs, ready, me } = useStore()
   // 个人偏好(U6):默认着陆页;切换账号时回到该账号的着陆页
@@ -21,7 +23,8 @@ function Shell() {
   }
 
   if (!ready) return <div className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">加载中…</div>
-  if (!loggedIn) return <Login />
+  // 重置 / 激活链接优先:即使浏览器里已有登录会话,也进入设置新密码
+  if (!loggedIn || isResetLink) return <Login />
 
   return (
     <AppShell page={page} navigate={setPage}>

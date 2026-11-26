@@ -138,7 +138,14 @@ function Console({ admin, onLogout }: { admin: string; onLogout: () => void }) {
         <span className="ml-auto text-xs text-slate-400">已登录:{admin}</span>
         <button
           type="button"
-          onClick={async () => { await api.post('/sysadmin/logout').catch(() => {}); onLogout() }}
+          onClick={async () => {
+            try {
+              await api.post('/sysadmin/logout')
+              onLogout()
+            } catch (e) {
+              setErr(`退出失败:${e instanceof ApiError ? e.message : String(e)},请检查网络后重试`)
+            }
+          }}
           className="flex items-center gap-1.5 rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
         >
           <LogOut className="size-3.5" />

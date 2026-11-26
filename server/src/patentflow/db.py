@@ -17,7 +17,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS teams (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, pl_id TEXT
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, pl_id TEXT,
+  archived_at TEXT                     -- 已停用(仍被成员 / 专利引用的团队不物理删除)
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -187,7 +188,7 @@ class Database:
     @staticmethod
     async def _migrate(conn: aiosqlite.Connection) -> None:
         """轻量迁移:为旧库补列(只增不删)。"""
-        for table, col, ddl in [("users", "pending_at", "TEXT"), ("patents", "cycle_id", "TEXT")]:
+        for table, col, ddl in [("users", "pending_at", "TEXT"), ("patents", "cycle_id", "TEXT"), ("teams", "archived_at", "TEXT")]:
             async with conn.execute(f"PRAGMA table_info({table})") as cur:
                 cols = {r[1] for r in await cur.fetchall()}
             if col not in cols:

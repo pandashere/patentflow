@@ -37,7 +37,7 @@ def can_manage_team(ctx: Ctx, team_id: str) -> bool:
 
 
 async def _team(ctx: Ctx, tid: str) -> dict[str, Any]:
-    async with ctx.conn.execute("SELECT * FROM teams WHERE id = ?", (tid,)) as cur:
+    async with ctx.conn.execute("SELECT * FROM teams WHERE id = ? AND archived_at IS NULL", (tid,)) as cur:
         t = await cur.fetchone()
     if not t:
         raise bad_request("请选择有效的团队")
@@ -155,7 +155,7 @@ async def create_team(ctx: Ctx, name: str, pl_id: str | None, demote_old: bool =
     name = name.strip()
     if not name:
         raise bad_request("请填写团队名称")
-    async with ctx.conn.execute("SELECT 1 FROM teams WHERE name = ?", (name,)) as cur:
+    async with ctx.conn.execute("SELECT 1 FROM teams WHERE name = ? AND archived_at IS NULL", (name,)) as cur:
         if await cur.fetchone():
             raise conflict("已有同名团队")
     tid = new_id("t-")
@@ -176,13 +176,27 @@ async def rename_team(ctx: Ctx, tid: str, name: str) -> None:
 async def delete_team(ctx: Ctx, tid: str) -> None:
     _require_gl(ctx)
     await _team(ctx, tid)
-    async with ctx.conn.execute("SELECT COUNT(*) n FROM users WHERE team_id = ? AND deactivated_at IS NULL", (tid,)) as c:
+    async with ctx.conn.execute(
+        "SELECT COUNT(*) n FROM users WHERE team_id = ? AND deactivated_at IS NULL AND pending_at IS NULL", (tid,)
+    ) as c:
         if (await c.fetchone())["n"]:
-            raise conflict("团队仍有成员,请先把成员调到其他团队")
-    async with ctx.conn.execute("SELECT COUNT(*) n FROM patents WHERE team_id = ?", (tid,)) as c:
+            raise conflict("团队仍有在职成员,请先把成员调到其他团队")
+    # 可见专利的检查以 GL 能看到的为准;私有草案、停用 / 待审批账号的引用不暴露给 GL(决策 9):
+    async with ctx.conn.execute(
+        "SELECT COUNT(*) n FROM patents WHERE team_id = ? AND visibility != 'private'", (tid,)
+    ) as c:
         if (await c.fetchone())["n"]:
             raise conflict("团队仍有专利(含归档),请先迁移到其他团队")
-    await ctx.conn.execute("DELETE FROM teams WHERE id = ?", (tid,))
+    async with ctx.conn.execute(
+        "SELECT (SELECT COUNT(*) FROM users WHERE team_id = ?) + (SELECT COUNT(*) FROM patents WHERE team_id = ?) n",
+        (tid, tid),
+    ) as c:
+        referenced = (await c.fetchone())["n"] > 0
+    if referenced:
+        # 仍被私有草案或停用账号引用:停用团队(从所有选择列表中消失),保留历史引用
+        await ctx.conn.execute("UPDATE teams SET archived_at = ?, pl_id = NULL WHERE id = ?", (now(), tid))
+    else:
+        await ctx.conn.execute("DELETE FROM teams WHERE id = ?", (tid,))
 
 
 async def _leads_other(ctx: Ctx, uid: str, except_tid: str) -> bool:

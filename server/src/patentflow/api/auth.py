@@ -164,7 +164,8 @@ async def public_teams(db: Database = Depends(get_db)) -> list[dict[str, str]]:
     """注册时选择团队(仅在开放自助注册时可用)。"""
     if not await _self_registration(db):
         raise DomainError(403, "registration_closed", "自助注册已关闭")
-    return [{"id": t["id"], "name": t["name"]} for t in await db.all("SELECT id, name FROM teams ORDER BY name")]
+    return [{"id": t["id"], "name": t["name"]}
+            for t in await db.all("SELECT id, name FROM teams WHERE archived_at IS NULL ORDER BY name")]
 
 
 @router.post("/auth/register", status_code=201)

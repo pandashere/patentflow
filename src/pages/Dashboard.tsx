@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useStore, computeStageTrend, monthRange, teamName, today, daysBetween } from '@/lib/store'
 import { STAGES, stageIndex, stageLabel, type Patent } from '@/lib/types'
 import { DueChip, RiskTag, SectionTitle, StagePill, StageTrendChart, ToneTag, VisibilityTag, STAGE_COLOR } from '@/components/pf'
@@ -236,6 +237,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                     <th className="pr-3 font-medium">负责人</th>
                     <th className="pr-3 font-medium">逾期</th>
                     <th className="pr-3 font-medium">最后活动</th>
+                    <th className="pr-3" />
                   </tr>
                 </thead>
                 <tbody>
@@ -250,6 +252,9 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                       <td className="pr-3 text-xs text-muted-foreground">{userById(p.ownerId).name}</td>
                       <td className="pr-3 font-medium text-red-600">{days} 天</td>
                       <td className="pr-3 text-xs text-muted-foreground">{lastActivity(p.id)}</td>
+                      <td className="pr-3 text-right">
+                        <NudgeButton patentId={p.id} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -475,6 +480,22 @@ function TodoRow({
         <span className="mt-0.5 block truncate text-xs text-muted-foreground">{sub}</span>
       </span>
       {right}
+    </button>
+  )
+}
+
+// 手动催办(决策 22:不做自动升级);点击后显示已发送,避免重复点击
+function NudgeButton({ patentId }: { patentId: string }) {
+  const { nudge } = useStore()
+  const [sent, setSent] = useState(false)
+  return (
+    <button
+      type="button"
+      disabled={sent}
+      onClick={async (e) => { e.stopPropagation(); await nudge(patentId); setSent(true) }}
+      className="rounded border px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:border-transparent disabled:text-teal-700"
+    >
+      {sent ? '已催办' : '催办'}
     </button>
   )
 }

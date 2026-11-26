@@ -118,6 +118,8 @@ interface Store {
   providers: Providers
   error: string | null
   clearError: () => void
+  notice: string | null // 操作成功的轻提示
+  clearNotice: () => void
   conflict: StageConflict | null
   resolveConflict: (keep: 'mine' | 'theirs') => Promise<void>
 
@@ -253,6 +255,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<StageConflict | null>(null)
   const [formEpoch, setFormEpoch] = useState(0)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     try {
@@ -383,6 +386,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const store: Store = {
     ready, loggedIn: !!b, providers, error, clearError: () => setError(null),
+    notice, clearNotice: () => setNotice(null),
     conflict,
     resolveConflict: async (keep) => {
       if (!conflict) return
@@ -390,7 +394,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await saveStage(conflict.patentId, conflict.stage, conflict.mine, conflict.note, conflict.currentVersion)
     },
 
-    me, persona, users, teams: b?.teams ?? [], userById, patents, transitions, cycles, config,
+    me, persona, users, teams: (b?.teams ?? []).filter((t) => !t.archived), userById, patents, transitions, cycles, config,
     versions: b?.versions ?? [], kpiRules: b?.kpiRules ?? [], kpiReport,
     notifications: b?.notifications ?? [], tokens: b?.tokens ?? [], prefs: b?.prefs ?? DEFAULT_PREFS,
     activeCycle, cycleOfPatent, stageOverdueDays, closingRisk,
@@ -404,7 +408,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (err) setError(`切换身份失败:${err}`)
     },
     login: doLogin,
-    logout: async () => { await api.post('/auth/logout').catch(() => {}); setBoot(null) },
+    // 服务端确认注销后才回到登录页;失败时保留登录态并提示(避免共用电脑上留下有效会话)
+    logout: async () => {
+      try {
+        await api.post('/auth/logout')
+        setBoot(null)
+      } catch (e) {
+        setError(`退出失败:${e instanceof Error ? e.message : String(e)},请检查网络后重试`)
+      }
+    },
     requestPasswordReset: (email) => api.post('/auth/password/forgot', { email }),
     resetPassword: async (token, pwd) => {
       if (pwd.length < 8) return 'weak'
@@ -490,21 +502,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // 只提交改动过的字段(两级),由后端与当前配置合并,避免整份旧配置覆盖他人刚保存的设置
       const prev = config as unknown as Record<string, unknown>
       const next = c as unknown as Record<string, unknown>
-      const patch: Record<string, unknown> = {}
-      for (const k of Object.keys(next)) {
-        const a = prev[k], v = next[k]
-        if (JSON.stringify(a) === JSON.stringify(v)) continue
-        if (v && typeof v === 'object' && !Array.isArray(v) && a && typeof a === 'object' && !Array.isArray(a)) {
-          const sub: Record<string, unknown> = {}
-          for (const sk of Object.keys(v)) {
-            const sv = (v as Record<string, unknown>)[sk]
-            if (JSON.stringify((a as Record<string, unknown>)[sk]) !== JSON.stringify(sv)) sub[sk] = sv
-          }
-          patch[k] = sub
-        } else {
-          patch[k] = v
+      // 递归比较:对象只保留变化的叶子字段,数组整体替换
+      const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x)
+      const diff = (a: Record<string, unknown>, v: Record<string, unknown>) => {
+        const out: Record<string, unknown> = {}
+        for (const k of Object.keys(v)) {
+          if (JSON.stringify(a[k]) === JSON.stringify(v[k])) continue
+          out[k] = isObj(a[k]) && isObj(v[k]) ? diff(a[k] as Record<string, unknown>, v[k] as Record<string, unknown>) : v[k]
         }
+        return out
       }
+      const patch = diff(prev, next)
       if (b) setBoot({ ...b, config: c }) // 乐观更新,输入不卡顿
       if (Object.keys(patch).length) await act(() => api.put('/config', patch))
     },
@@ -549,7 +557,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reviewExtension: async (pid, eid, approve) => {
       await act(() => api.post(`${P(pid)}/extensions/${eid}/${approve ? 'approve' : 'reject'}`))
     },
-    nudge: async (pid) => { await act(() => api.post(`${P(pid)}/nudge`)) },
+    nudge: async (pid) => {
+      if ((await act(() => api.post(`${P(pid)}/nudge`))) !== undefined) setNotice('已催办,负责人与共同发明人会收到通知')
+    },
     toggleCrossCycle: async (pid) => { await act(() => api.post(`${P(pid)}/cross-cycle`)) },
     createToken: async (name, days, scope) =>
       (await act(() => api.post<{ token: string }>('/tokens', { name, days, scope })))?.token ?? null,

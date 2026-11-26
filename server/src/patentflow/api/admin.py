@@ -86,7 +86,9 @@ def token_json(r: Any) -> dict[str, Any]:
 
 
 async def teams_json(db: Database) -> list[dict[str, Any]]:
-    return [{"id": t["id"], "name": t["name"], "plId": t["pl_id"]} for t in await db.all("SELECT * FROM teams ORDER BY id")]
+    """含已停用团队(用于显示历史引用的团队名),archived=true 的不应出现在选择列表中。"""
+    return [{"id": t["id"], "name": t["name"], "plId": t["pl_id"], "archived": bool(t["archived_at"])}
+            for t in await db.all("SELECT * FROM teams ORDER BY id")]
 
 
 # —— 成员与团队 ——
@@ -233,9 +235,12 @@ async def get_config(auth: Auth = Depends(current_auth), db: Database = Depends(
 async def put_config(body: dict[str, Any], request: Request, auth: Auth = Depends(require_gl)) -> dict[str, bool]:
     """接受部分字段:在写事务内与当前配置合并(两级),避免旧页面整份提交覆盖他人刚保存的设置。"""
     async def go(ctx):  # type: ignore[no-untyped-def]
-        merged = {**ctx.cfg}
-        for k, v in body.items():
-            merged[k] = {**merged[k], **v} if isinstance(v, dict) and isinstance(merged.get(k), dict) else v
+        def deep_merge(base: Any, patch: Any) -> Any:
+            if isinstance(base, dict) and isinstance(patch, dict):
+                return {**base, **{k: deep_merge(base.get(k), v) for k, v in patch.items()}}
+            return patch
+
+        merged = deep_merge(ctx.cfg, body)
         try:
             cfg = validate_system(merged)
         except (ValueError, KeyError, TypeError) as e:
