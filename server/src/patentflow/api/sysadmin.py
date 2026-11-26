@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from ..config import Settings, sysadmin_enabled
 from ..db import Database, dumps
-from ..deps import get_db, get_settings
+from ..deps import get_db, get_settings, link_base
 from ..domain.constants import ROLES
 from ..domain.accounts import invalidate_links
 from ..domain.ctx import write_ctx
@@ -60,7 +60,6 @@ class UserIn(BaseModel):
 
 class TeamIn(BaseModel):
     name: str = Field(min_length=1, max_length=40)
-    plId: str | None = None
 
 
 def _fmt(dt) -> str:  # type: ignore[no-untyped-def]
@@ -180,7 +179,7 @@ async def reset_password(uid: str, body: ResetIn, request: Request, admin: str =
         else:
             await invalidate_links(ctx.conn, uid)  # 只保留最新这一条链接
             token = secrets.token_urlsafe(24)
-            link = f"{str(request.base_url).rstrip('/')}/reset?token={token}"
+            link = f"{link_base(request)}/reset?token={token}"
             await ctx.conn.execute(
                 "INSERT INTO password_resets(token_hash, user_id, created_at, expires_at) VALUES(?,?,?,?)",
                 (sha256(token), uid, now(), _fmt(now_dt() + timedelta(minutes=settings.reset_token_ttl_minutes))))
@@ -267,9 +266,10 @@ async def create_team(body: TeamIn, request: Request, admin: str = Depends(curre
                       db: Database = Depends(get_db)) -> dict[str, Any]:
     tid = new_id("t-")
     async with db.tx() as conn:
-        await conn.execute("INSERT INTO teams(id, name, pl_id) VALUES(?,?,?)", (tid, body.name.strip(), body.plId))
+        # PL 指派涉及调组与角色变更,统一由 GL 在业务后台「团队」中完成
+        await conn.execute("INSERT INTO teams(id, name, pl_id) VALUES(?,?,NULL)", (tid, body.name.strip()))
         await audit(conn, request, admin, "create_team", body.name.strip())
-    return {"id": tid, "name": body.name.strip(), "plId": body.plId}
+    return {"id": tid, "name": body.name.strip(), "plId": None}
 
 
 SYSADMIN_ACTOR = {"id": "sysadmin", "name": "系统管理员", "role": "gl", "teamId": ""}

@@ -77,7 +77,9 @@ async def invite(ctx: Ctx, pid: str, user_id: str) -> None:
     _in_review(p)
     if user_id == p["ownerId"]:
         raise bad_request("不能邀请负责人本人审查")  # 决策:不设其他回避规则
-    async with ctx.conn.execute("SELECT name FROM users WHERE id = ? AND deactivated_at IS NULL", (user_id,)) as c:
+    async with ctx.conn.execute(
+        "SELECT name FROM users WHERE id = ? AND deactivated_at IS NULL AND pending_at IS NULL", (user_id,)
+    ) as c:
         u = await c.fetchone()
     if not u:
         raise bad_request("被邀请人不存在或已停用")

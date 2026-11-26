@@ -8,7 +8,7 @@ from ..security import new_id
 from ..timeutil import now, today
 from . import access
 from .common import (
-    add_transition, bump, default_due, get_operable, get_visible, has_left_draft, label, overdue_days,
+    add_transition, bump, cycle_of, default_due, get_operable, get_visible, has_left_draft, label, overdue_days,
     void_pending_extensions,
 )
 from .constants import STAGE_FIELDS, STAGE_KEYS, VIS_LABEL, VISIBILITIES, stage_index
@@ -152,6 +152,9 @@ async def set_visibility(ctx: Ctx, pid: str, v: str) -> None:
         return
     if v == "private" and await has_left_draft(ctx.conn, p):
         raise conflict("离开过草案的专利不能再设为私有")
+    if v == "private":
+        # 私有后 PL/GL 不可见,待批延期将无人能处理:作废,负责人可在阈值内重新申请
+        await void_pending_extensions(ctx, pid)
     await bump(ctx, pid, visibility=v)
     p["visibility"] = v
     await notify(ctx, "transition", f"《{p['title']}》可见性调整为「{VIS_LABEL[v]}」", p)
@@ -182,10 +185,12 @@ async def unarchive(ctx: Ctx, pid: str, reason: str) -> None:
 
 
 async def _active_user(ctx: Ctx, uid: str) -> dict[str, Any]:
-    async with ctx.conn.execute("SELECT * FROM users WHERE id = ? AND deactivated_at IS NULL", (uid,)) as cur:
+    async with ctx.conn.execute(
+        "SELECT * FROM users WHERE id = ? AND deactivated_at IS NULL AND pending_at IS NULL", (uid,)
+    ) as cur:
         u = await cur.fetchone()
     if not u:
-        raise bad_request("该成员不存在或已停用")
+        raise bad_request("该成员不存在、已停用或尚未通过注册审批")
     return dict(u)
 
 
@@ -222,8 +227,16 @@ async def toggle_cross_cycle(ctx: Ctx, pid: str) -> bool:
     if ctx.me["role"] != "gl":
         raise forbidden("仅 GL 可标记跨周期")
     p = await get_operable(ctx, pid)
-    await bump(ctx, pid, cross_cycle=0 if p["crossCycle"] else 1)
-    return not p["crossCycle"]
+    if not p["crossCycle"]:
+        await bump(ctx, pid, cross_cycle=1)
+        return True
+    # 取消豁免:超出所属周期结束日的截止日按决策 18 截断(延期记录保留供追溯)
+    due_dates = dict(p["dueDates"])
+    c = await cycle_of(ctx.conn, p["createdAt"])
+    if c:
+        due_dates = {k: (c["end"] if v > c["end"] else v) for k, v in due_dates.items()}
+    await bump(ctx, pid, cross_cycle=0, due_dates=due_dates)
+    return False
 
 
 async def transfer(ctx: Ctx, pid: str, to: str, keep_as_collaborator: bool = True, *, quiet: bool = False) -> None:

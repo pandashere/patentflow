@@ -34,6 +34,7 @@ class Settings:
     session_ttl_hours: int = 12
     reset_token_ttl_minutes: int = 30
     sso_providers: list[SsoProviderConf] = field(default_factory=list)
+    public_url: str = ""  # 对外访问地址(生成重置/激活链接用);未配置时回退为请求地址
     webhook_url: str = ""
     webhook_secret: str = ""
     token_ttl_days_max: int = 365
@@ -85,6 +86,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         session_ttl_hours=int(auth.get("session_ttl_hours", 12)),
         reset_token_ttl_minutes=int(auth.get("reset_token_ttl_minutes", 30)),
         sso_providers=providers,
+        public_url=(os.environ.get("PATENTFLOW_PUBLIC_URL") or (raw.get("server") or {}).get("public_url") or "").rstrip("/"),
         webhook_url=notify.get("webhook_url", "") or "",
         webhook_secret=notify.get("webhook_secret", "") or "",
         token_ttl_days_max=int(security.get("token_ttl_days_max", 365)),

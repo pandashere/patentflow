@@ -270,17 +270,21 @@ async def deactivate(ctx: Ctx, uid: str, assignments: dict[str, str]) -> dict[st
     missing = [p["id"] for p in owned if p["visibility"] != "private" and p["id"] not in assignments]
     if missing:
         raise bad_request(f"还有 {len(missing)} 件非私有专利未指定接收人", code="unassigned", patentIds=missing)
-    # 私有草案未由本人转交的,交给团队现任 PL(teams.pl_id);PL 空缺或就是本人时交给执行停用的 GL
-    async with ctx.conn.execute(
-        """SELECT u.id FROM teams t JOIN users u ON u.id = t.pl_id
-           WHERE t.id = ? AND u.id != ? AND u.deactivated_at IS NULL""",
-        (u["team_id"], uid),
-    ) as cur:
-        pl = await cur.fetchone()
-    fallback = pl["id"] if pl else ctx.me["id"]
+    # 私有草案未由本人转交的,交给「该专利所属团队」的现任 PL(teams.pl_id);
+    # PL 空缺或就是本人时,交给执行停用的 GL
+    async def fallback_for(team_id: str) -> str:
+        async with ctx.conn.execute(
+            """SELECT u.id FROM teams t JOIN users u ON u.id = t.pl_id
+               WHERE t.id = ? AND u.id != ? AND u.deactivated_at IS NULL AND u.pending_at IS NULL""",
+            (team_id, uid),
+        ) as cur:
+            pl = await cur.fetchone()
+        return pl["id"] if pl else ctx.me["id"]
 
     async def check_recipient(rid: str) -> None:
-        async with ctx.conn.execute("SELECT 1 FROM users WHERE id = ? AND deactivated_at IS NULL", (rid,)) as cur:
+        async with ctx.conn.execute(
+            "SELECT 1 FROM users WHERE id = ? AND deactivated_at IS NULL AND pending_at IS NULL", (rid,)
+        ) as cur:
             if rid == uid or not await cur.fetchone():
                 raise bad_request("接收人不存在或已停用")
 
@@ -289,7 +293,7 @@ async def deactivate(ctx: Ctx, uid: str, assignments: dict[str, str]) -> dict[st
         to = assignments.get(p["id"]) if p["visibility"] != "private" else None  # 私有草案 GL 不可指定
         if to:
             await check_recipient(to)
-        target = to or fallback
+        target = to or await fallback_for(p["teamId"])
         collab = [c for c in p["collaborators"] if c != target]
         cols: dict[str, Any] = {"owner_id": target, "collaborators": collab}
         if p["visibility"] == "private":

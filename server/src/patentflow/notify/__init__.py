@@ -73,14 +73,18 @@ class WebhookNotifier(LoggingNotifier):
     def __init__(self, url: str = "", secret: str = "", retries: int = 3) -> None:
         super().__init__()
         self.url, self.secret, self.retries = url, secret, retries
+        # 账号安全事件(含一次性重置 / 激活链接)只投递到部署配置的回调,
+        # 不随 GL 在界面修改的地址变化,避免业务管理员改地址截获他人凭据
+        self.security_url = url
 
     async def send(self, event: dict[str, Any]) -> None:
         await super().send(event)
-        if not self.url:
+        url = self.security_url if event.get("security") else self.url
+        if not url:
             return
         body = json.dumps(event, ensure_ascii=False).encode()
         # 后台投递,不阻塞业务请求
-        asyncio.get_running_loop().create_task(self._deliver(self.url, body))
+        asyncio.get_running_loop().create_task(self._deliver(url, body))
 
     async def _deliver(self, url: str, body: bytes) -> None:
         for attempt in range(self.retries):

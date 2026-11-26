@@ -73,3 +73,9 @@ def require_gl(auth: Auth = Depends(current_auth)) -> Auth:
     if auth.user["role"] != "gl":
         raise DomainError(403, "forbidden", "仅 GL 可执行该操作")
     return auth
+
+
+def link_base(request: Request) -> str:
+    """生成邮件 / IM 中链接的根地址:优先使用部署配置的 public_url,避免 Host 头被伪造后链接指向他处。"""
+    settings: Settings = request.app.state.settings
+    return settings.public_url or str(request.base_url).rstrip("/")

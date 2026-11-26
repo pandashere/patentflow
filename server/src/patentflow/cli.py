@@ -72,12 +72,18 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit("密码至少 8 位")
         from .security import hash_password
 
+        from .domain.accounts import invalidate_links
+
         async def go(db: Database) -> int:
             async with db.tx() as conn:
-                cur = await conn.execute(
-                    "UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE email = ?",
-                    (hash_password(pw), args.email.strip().lower()))
-                return cur.rowcount
+                async with conn.execute("SELECT id FROM users WHERE email = ?", (args.email.strip().lower(),)) as c:
+                    row = await c.fetchone()
+                if not row:
+                    return 0
+                await conn.execute("UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?",
+                                   (hash_password(pw), row["id"]))
+                await invalidate_links(conn, row["id"])
+                return 1
 
         if not asyncio.run(with_db(go)):
             sys.exit("账号不存在")

@@ -72,10 +72,12 @@ async def reports_for(db: Database, me: dict[str, Any], rules: list[dict[str, An
     out = {}
     for rule in rules:
         cyc = next((c for c in cycles if c["id"] == rule["cycleId"]), None)
-        if cyc and cyc["status"] == "closed" and rule["id"] in snaps:
-            s = snaps[rule["id"]]
-            items = loads(s["items"], [])
-            rep = {"ruleId": rule["id"], "items": items, "overall": s["overall"], "frozenAt": s["frozen_at"],
+        if cyc and cyc["status"] == "closed":
+            # 已收口:只展示冻结快照;无快照(旧数据)时展示空报表,不做实时重算
+            s = snaps.get(rule["id"])
+            items = loads(s["items"], []) if s else []
+            rep = {"ruleId": rule["id"], "items": items, "overall": s["overall"] if s else 0.0,
+                   "frozenAt": s["frozen_at"] if s else cyc.get("closedAt", ""),
                    "fullyAchieved": sum(1 for i in items if i["score"] == 1)}
         else:
             rep = kpi.compute(rule, patents, transitions, cycles, cfg)

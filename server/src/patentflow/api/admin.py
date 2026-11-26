@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..config import Settings
 from ..db import Database
-from ..deps import Auth, current_auth, get_db, get_settings, require_gl
+from ..deps import Auth, current_auth, get_db, get_settings, link_base, require_gl
 from ..domain import access, members
 from ..domain.errors import DomainError, bad_request, forbidden, not_found
 from ..domain.prefs import get_prefs, in_quiet_hours, save_prefs
@@ -104,7 +104,7 @@ async def teams(auth: Auth = Depends(current_auth), db: Database = Depends(get_d
 async def add_user(body: MemberIn, request: Request, auth: Auth = Depends(current_auth),
                    db: Database = Depends(get_db)) -> dict[str, Any]:
     """GL 任意团队;本组 PL 向本组添加普通用户。返回激活链接(只返回这一次,同时已发给本人)。"""
-    uid, link = await run(request, auth, lambda ctx: members.add_member(ctx, body.model_dump(), str(request.base_url)))
+    uid, link = await run(request, auth, lambda ctx: members.add_member(ctx, body.model_dump(), link_base(request)))
     return {"user": await load_user(db.reader, uid), "activationLink": link}  # type: ignore[arg-type]
 
 

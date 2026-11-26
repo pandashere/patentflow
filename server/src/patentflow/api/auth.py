@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..config import Settings
 from ..db import Database
-from ..deps import SESSION_COOKIE, Auth, current_auth, get_db, get_settings
+from ..deps import SESSION_COOKIE, Auth, current_auth, get_db, get_settings, link_base
 from ..domain.accounts import invalidate_links
 from ..domain.ctx import write_ctx
 from ..domain.errors import DomainError
@@ -91,7 +91,7 @@ async def forgot(body: ForgotIn, request: Request, db: Database = Depends(get_db
     out: dict[str, Any] = {"message": FORGOT_MSG}
     if row:
         token = secrets.token_urlsafe(24)
-        link = f"{str(request.base_url).rstrip('/')}/reset?token={token}"
+        link = f"{link_base(request)}/reset?token={token}"
         user = await load_user(db.reader, row["id"])  # type: ignore[arg-type]
         async with write_ctx(db, user, settings, request.app.state.notifier) as ctx:  # type: ignore[arg-type]
             await ctx.conn.execute(

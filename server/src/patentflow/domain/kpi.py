@@ -212,7 +212,8 @@ async def close_cycle(ctx: Ctx, cid: str) -> int:
         raise conflict("周期已收口")
     async with ctx.conn.execute("SELECT * FROM cycles") as cur:
         cycles = [cycle_json(r) for r in await cur.fetchall()]
-    async with ctx.conn.execute("SELECT * FROM kpi_rules WHERE cycle_id = ? AND enabled = 1", (cid,)) as cur:
+    # 停用的规则也冻结:之后重新启用,历史报表依然不可变
+    async with ctx.conn.execute("SELECT * FROM kpi_rules WHERE cycle_id = ?", (cid,)) as cur:
         rules = [rule_json(r) for r in await cur.fetchall()]
     patents = await load_patents(ctx.conn)
     transitions = await load_transitions(ctx.conn)

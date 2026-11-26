@@ -341,7 +341,10 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             <SideCard icon={CalendarClock} title="延期记录">
               <div className="space-y-3">
                 {patent.extensions.slice().reverse().map((e) => {
-                  const canApprove = e.status === 'pending' && isManagerOfTeam
+                  // 与后端一致:本组 PL/GL 审批非私有专利;负责人本人为 PL/GL 时可自批(决策 35)
+                  const canApprove = e.status === 'pending' && (
+                    (isManagerOfTeam && patent.visibility !== 'private')
+                    || (patent.ownerId === me.id && me.role !== 'user'))
                   return (
                     <div key={e.id} className="border-b pb-3 last:border-0 last:pb-0">
                       <div className="flex items-center gap-2 text-xs">

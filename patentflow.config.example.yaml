@@ -5,6 +5,8 @@
 server:
   host: 0.0.0.0
   port: 8000
+  # 对外访问地址:重置 / 激活链接以此生成(未配置时取请求地址,可能被伪造的 Host 头影响)
+  public_url: https://patentflow.corp.local
 
 database:
   # SQLite 单文件即可支撑几十人团队;后续可平滑迁移 PostgreSQL
@@ -38,6 +40,8 @@ auth:
       enabled: false
 
 notify:
+  # 部署级回调:账号安全事件(重置 / 激活链接)只投递到这里,GL 无法在界面修改;
+  # 业务通知默认也投递到这里,GL 可在界面改为其他地址
   webhook_url: ""                        # 通知事件 POST + 签名头回调
   auto_nudge: off                        # 逾期自动催办节奏:off | 3d | 7d
 

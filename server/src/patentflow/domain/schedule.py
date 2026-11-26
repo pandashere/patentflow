@@ -54,7 +54,7 @@ async def request_extension(ctx: Ctx, pid: str, new_due: str, reason: str) -> st
 async def review_extension(ctx: Ctx, pid: str, ext_id: str, approve: bool) -> None:
     p = await get_visible(ctx, pid)
     self_owned = p["ownerId"] == ctx.me["id"] and ctx.me["role"] in ("pl", "gl")
-    if not (access.is_team_manager(ctx.me, p) and (p["visibility"] != "private" or self_owned)):
+    if not (self_owned or (access.is_team_manager(ctx.me, p) and p["visibility"] != "private")):
         raise forbidden("仅本组 PL 或 GL 可审批延期")
     e = next((x for x in p["extensions"] if x["id"] == ext_id), None)
     if not e:
