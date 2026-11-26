@@ -22,7 +22,9 @@ from ..config import Settings, sysadmin_enabled
 from ..db import Database, dumps
 from ..deps import get_db, get_settings
 from ..domain.constants import ROLES
+from ..domain.accounts import invalidate_links
 from ..domain.ctx import write_ctx
+from ..domain.members import clear_stale_leadership
 from ..domain.errors import DomainError, bad_request, conflict, not_found
 from ..domain.notifications import notify
 from ..domain.repo import load_user, load_users
@@ -170,11 +172,13 @@ async def reset_password(uid: str, body: ResetIn, request: Request, admin: str =
     async with write_ctx(db, {"id": "sysadmin", "name": "系统管理员"}, settings, request.app.state.notifier) as ctx:
         if body.mode == "temp":
             pw = _temp_password()
+            await invalidate_links(ctx.conn, uid)
             await ctx.conn.execute(
                 "UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?",
                 (hash_password(pw), uid))
             out["tempPassword"] = pw
         else:
+            await invalidate_links(ctx.conn, uid)  # 只保留最新这一条链接
             token = secrets.token_urlsafe(24)
             link = f"{str(request.base_url).rstrip('/')}/reset?token={token}"
             await ctx.conn.execute(
@@ -233,6 +237,7 @@ async def patch_user(uid: str, body: PatchIn, request: Request, admin: str = Dep
             cols = ", ".join(f"{k} = ?" for k in sets)
             epoch = ", session_epoch = session_epoch + 1" if "role" in sets else ""
             await conn.execute(f"UPDATE users SET {cols}{epoch} WHERE id = ?", (*sets.values(), uid))
+            await clear_stale_leadership(conn, uid, sets.get("role"), sets.get("team_id"))
             await audit(conn, request, admin, "update_user", u["email"], sets)
     return await _user(db, uid)
 

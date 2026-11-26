@@ -302,11 +302,11 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             )}
           </div>
 
-          {shownStage === 'draft' && <DraftPane key={`d-${patent.id}-${stageVersions.length}`} patent={patent} editable={paneEditable} />}
-          {shownStage === 'patentability' && <PatentabilityPane key={`p-${patent.id}-${patent.stageData.patentability.round}`} patent={patent} editable={paneEditable} />}
-          {shownStage === 'implementation' && <MarkdownPane key={`i-${patent.id}-${stageVersions.length}`} patent={patent} editable={paneEditable} stage="implementation" />}
-          {shownStage === 'search' && <MarkdownPane key={`s-${patent.id}-${stageVersions.length}`} patent={patent} editable={paneEditable} stage="search" />}
-          {shownStage === 'doi' && <DoiPane key={`o-${patent.id}-${stageVersions.length}`} patent={patent} editable={paneEditable} />}
+          {shownStage === 'draft' && <DraftPane key={`d-${patent.id}-${store.formEpoch}`} patent={patent} editable={paneEditable} />}
+          {shownStage === 'patentability' && <PatentabilityPane key={`p-${patent.id}-${patent.stageData.patentability.round}-${store.formEpoch}`} patent={patent} editable={paneEditable} />}
+          {shownStage === 'implementation' && <MarkdownPane key={`i-${patent.id}-${store.formEpoch}`} patent={patent} editable={paneEditable} stage="implementation" />}
+          {shownStage === 'search' && <MarkdownPane key={`s-${patent.id}-${store.formEpoch}`} patent={patent} editable={paneEditable} stage="search" />}
+          {shownStage === 'doi' && <DoiPane key={`o-${patent.id}-${store.formEpoch}`} patent={patent} editable={paneEditable} />}
         </div>
 
         {/* 右栏 */}

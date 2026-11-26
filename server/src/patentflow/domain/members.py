@@ -14,6 +14,14 @@ from .notifications import notify
 from .repo import load_patents
 
 
+async def clear_stale_leadership(conn: Any, uid: str, new_role: str | None, new_team: str | None) -> None:
+    """角色降为普通用户或调离团队后,撤销其失效的团队负责人指派(业务后台与系统管理员后台共用)。"""
+    if new_role == "user":
+        await conn.execute("UPDATE teams SET pl_id = NULL WHERE pl_id = ?", (uid,))
+    elif new_team:
+        await conn.execute("UPDATE teams SET pl_id = NULL WHERE pl_id = ? AND id != ?", (uid, new_team))
+
+
 def _require_gl(ctx: Ctx) -> None:
     if ctx.me["role"] != "gl":
         raise forbidden("仅 GL 可管理成员")
@@ -133,7 +141,8 @@ async def reject(ctx: Ctx, uid: str, reason: str) -> None:
     # 通知需在删除前发出(收件人须存在)
     await notify(ctx, "transition", f"你的 PATENTFLOW 注册未通过:{reason.strip() or '未说明原因'}",
                  only=[uid], security=True)
-    await ctx.conn.execute("DELETE FROM notifications WHERE user_id = ?", (uid,))
+    for t in ("notifications", "password_resets", "user_prefs", "sessions", "api_tokens"):
+        await ctx.conn.execute(f"DELETE FROM {t} WHERE user_id = ?", (uid,))
     await ctx.conn.execute("DELETE FROM users WHERE id = ?", (uid,))
 
 
@@ -242,10 +251,7 @@ async def update_member(ctx: Ctx, uid: str, patch: dict[str, Any]) -> None:
     cols = ", ".join(f"{k} = ?" for k in sets)
     epoch = ", session_epoch = session_epoch + 1" if "role" in sets else ""  # 角色变更后旧会话失效
     await ctx.conn.execute(f"UPDATE users SET {cols}{epoch} WHERE id = ?", (*sets.values(), uid))
-    # 不再是 PL、或调离原团队:撤销其团队负责人身份,避免团队「PL」指向非 PL
-    if sets.get("role") == "user" or "team_id" in sets:
-        await ctx.conn.execute("UPDATE teams SET pl_id = NULL WHERE pl_id = ? AND id != ?",
-                               (uid, sets.get("team_id", "") if sets.get("role") != "user" else ""))
+    await clear_stale_leadership(ctx.conn, uid, sets.get("role"), sets.get("team_id"))
 
 
 async def deactivate(ctx: Ctx, uid: str, assignments: dict[str, str]) -> dict[str, int]:

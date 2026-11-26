@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from ..config import Settings
 from ..db import Database
 from ..deps import SESSION_COOKIE, Auth, current_auth, get_db, get_settings
+from ..domain.accounts import invalidate_links
 from ..domain.ctx import write_ctx
 from ..domain.errors import DomainError
 from ..domain.notifications import notify
@@ -84,7 +85,9 @@ async def logout(request: Request, response: Response, db: Database = Depends(ge
 async def forgot(body: ForgotIn, request: Request, db: Database = Depends(get_db),
                  settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """无论账号是否存在都返回相同话术;重置链接经通知接口投递(安全事件强制送达)。"""
-    row = await db.one("SELECT id FROM users WHERE email = ? AND deactivated_at IS NULL", (body.email.strip(),))
+    # 停用与待审批账号不签发链接(话术不变,不泄露账号状态)
+    row = await db.one("SELECT id FROM users WHERE email = ? AND deactivated_at IS NULL AND pending_at IS NULL",
+                       (body.email.strip(),))
     out: dict[str, Any] = {"message": FORGOT_MSG}
     if row:
         token = secrets.token_urlsafe(24)
@@ -112,7 +115,7 @@ async def reset(body: ResetIn, db: Database = Depends(get_db)) -> dict[str, bool
     if row["expires_at"] < now():
         raise DomainError(400, "reset_expired", "重置链接已过期,请重新申请")
     async with db.tx() as conn:
-        await conn.execute("UPDATE password_resets SET used = 1 WHERE token_hash = ?", (row["token_hash"],))
+        await invalidate_links(conn, row["user_id"])  # 含本链接在内,该用户所有未用链接作废
         # 改密后所有旧会话失效
         await conn.execute(
             "UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?",
@@ -134,6 +137,7 @@ async def change_password(body: ChangePwdIn, request: Request, response: Respons
             "UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?",
             (hash_password(body.new), auth.id),
         )
+        await invalidate_links(conn, auth.id)
         # 当前会话续期到新 epoch,其余会话失效
         sid = request.cookies.get(SESSION_COOKIE)
         if sid:

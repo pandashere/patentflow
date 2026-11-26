@@ -137,6 +137,9 @@ async def submit(ctx: Ctx, pid: str, score: dict[str, Any]) -> None:
         raise forbidden("你不在本轮审查名单中")
     if ctx.me["id"] == p["ownerId"]:
         raise forbidden("你已是该专利的负责人,不能审查自己的专利")
+    rnd = p["stageData"]["patentability"]["round"]
+    if score.get("round") is not None and int(score["round"]) != rnd:
+        raise conflict(f"审查已进入第 {rnd} 轮,材料可能已修改,请刷新后重新查看再评分", reason="stale_round")
     verdict = score.get("verdict")
     if verdict not in ("pass", "reject"):
         raise bad_request("verdict 必须是 pass 或 reject")

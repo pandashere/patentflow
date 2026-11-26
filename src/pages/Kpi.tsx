@@ -35,7 +35,7 @@ export default function Kpi() {
                   name: '',
                   scope: { type: me.role === 'gl' ? 'global' : 'team', teamId: me.role === 'pl' ? me.teamId : undefined },
                   cycleId: defaultCycleId,
-                  targets: [{ stage: 'patentability', deadline: '2026-12-31' }],
+                  targets: [{ stage: 'patentability', deadline: cycles.find((c) => c.id === defaultCycleId)?.end ?? '' }],
                   scoring: { mode: 'ratio' },
                   scorerHook: null,
                   enabled: true,
@@ -112,8 +112,10 @@ export default function Kpi() {
                       </button>
                       <button
                         type="button"
+                        disabled={frozen}
+                        title={frozen ? '所属周期已收口,规则只读(历史得分已冻结)' : undefined}
                         onClick={() => setEditing({ ...r })}
-                        className="flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                        className="flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
                       >
                         <Pencil className="size-3" />
                         编辑
@@ -261,9 +263,9 @@ function KpiEditor({
                 onChange={(e) => setForm({ ...form, cycleId: e.target.value })}
                 className="mt-1.5 w-full rounded-md border bg-white px-2.5 py-2 text-sm outline-none focus:border-teal-600"
               >
-                {cycles.map((c) => (
+                {cycles.filter((c) => c.status !== 'closed').map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}({c.start} ~ {c.end}){c.status === 'closed' ? '·已收口' : ''}
+                    {c.name}({c.start} ~ {c.end})
                   </option>
                 ))}
               </select>
@@ -275,7 +277,7 @@ function KpiEditor({
               <label className="ui-label text-slate-500">目标节点(阶段 × 截止日)</label>
               <button
                 type="button"
-                onClick={() => setForm({ ...form, targets: [...form.targets, { stage: 'draft', deadline: '2026-12-31' }] })}
+                onClick={() => setForm({ ...form, targets: [...form.targets, { stage: 'draft', deadline: boundCycle?.end ?? '' }] })}
                 className="text-xs text-teal-700 hover:underline"
               >
                 + 添加目标
@@ -301,6 +303,8 @@ function KpiEditor({
                   <span className="text-xs text-slate-400">前到达</span>
                   <input
                     type="date"
+                    min={boundCycle?.start}
+                    max={boundCycle?.end}
                     value={t.deadline}
                     onChange={(e) =>
                       setForm({

@@ -78,6 +78,7 @@ class ScoreIn(BaseModel):
     novelty: int
     comment: str = ""
     verdict: Literal["pass", "reject"]
+    round: int | None = None  # 打开评分表单时的轮次;与当前轮次不一致返回 409
 
 
 class InviteIn(BaseModel):

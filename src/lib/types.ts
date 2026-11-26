@@ -66,6 +66,7 @@ export interface ReviewScore {
   comment: string
   verdict: ReviewVerdict
   submittedAt?: string
+  round?: number // 提交时携带打开表单时的轮次
 }
 
 export interface ReviewerAssignment {

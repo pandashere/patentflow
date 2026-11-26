@@ -48,7 +48,8 @@ const fieldCls =
 
 // —— 阶段 1:草案(background / class / idea) ——
 export function DraftPane({ patent, editable }: PaneProps) {
-  const { saveStageData, config } = useStore()
+  const { saveStageData, config, latestVersion } = useStore()
+  const [base] = useState(() => latestVersion(patent.id, 'draft')) // 编辑基准版本
   const d = patent.stageData.draft
   const [form, setForm] = useState<DraftData>({ ...d })
 
@@ -91,7 +92,7 @@ export function DraftPane({ patent, editable }: PaneProps) {
           />
         </div>
       </div>
-      <SaveBar editable={editable} onSave={(note) => saveStageData(patent.id, 'draft', form, note)} />
+      <SaveBar editable={editable} onSave={(note) => saveStageData(patent.id, 'draft', form, note, base)} />
     </div>
   )
 }
@@ -100,8 +101,9 @@ export function DraftPane({ patent, editable }: PaneProps) {
 export function PatentabilityPane({ patent, editable }: PaneProps) {
   const {
     me, config, activeUsers, userById, inviteReviewer, withdrawReviewer, declineReview, startNewRound,
-    submitReview, saveStageData, reviewPassCount, reviewRejected, isReviewerOf, canOperatePatent,
+    submitReview, saveStageData, reviewPassCount, reviewRejected, isReviewerOf, canOperatePatent, latestVersion,
   } = useStore()
+  const [base] = useState(() => latestVersion(patent.id, 'patentability')) // 编辑基准版本
   const d = patent.stageData.patentability
   const dimLabels = config.reviewDims.map((x) => x.label)
   const dimKeys = config.reviewDims.map((x) => x.key)
@@ -160,7 +162,7 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
           {editable && (
             <button
               type="button"
-              onClick={() => saveStageData(patent.id, 'patentability', { ...d, summary, selfAssessment: self }, '更新审查摘要/自评')}
+              onClick={() => saveStageData(patent.id, 'patentability', { summary, selfAssessment: self }, '更新审查摘要/自评', base)}
               className="mt-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
             >
               保存摘要与自评
@@ -340,7 +342,7 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
             <button
               type="button"
               onClick={async () => {
-                const r = await submitReview(patent.id, { ...score, verdict: 'pass' })
+                const r = await submitReview(patent.id, { ...score, verdict: 'pass', round: d.round })
                 if (r === 'error') return
                 if (r === 'below-min') setBlockMsg(`加权均分低于下限 ${config.reviewMinWeighted},不能判「通过」—— 请提高评分或改判打回`)
                 else { setBlockMsg(''); setEditingReview(false) }
@@ -354,7 +356,7 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
               type="button"
               onClick={() => {
                 if (!score.comment.trim()) { setBlockMsg('打回时请填写审查意见'); return }
-                submitReview(patent.id, { ...score, verdict: 'reject' }).then((r) => { if (r === 'ok') { setBlockMsg(''); setEditingReview(false) } })
+                submitReview(patent.id, { ...score, verdict: 'reject', round: d.round }).then((r) => { if (r === 'ok') { setBlockMsg(''); setEditingReview(false) } })
               }}
               className="flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
             >
@@ -469,7 +471,8 @@ function ReviewerCard({
 
 // —— 阶段 3/4:Markdown 自由格式(实施 / 检索) ——
 export function MarkdownPane({ patent, editable, stage }: PaneProps & { stage: 'implementation' | 'search' }) {
-  const { saveStageData } = useStore()
+  const { saveStageData, latestVersion } = useStore()
+  const [base] = useState(() => latestVersion(patent.id, stage)) // 编辑基准版本
   const [md, setMd] = useState(patent.stageData[stage].markdown)
   const [preview, setPreview] = useState(!editable || !!patent.stageData[stage].markdown)
 
@@ -523,7 +526,7 @@ export function MarkdownPane({ patent, editable, stage }: PaneProps & { stage: '
       )}
 
       <SaveBar editable={editable} onSave={(note) => {
-        saveStageData(patent.id, stage, { markdown: md } satisfies MarkdownStageData, note)
+        saveStageData(patent.id, stage, { markdown: md } satisfies MarkdownStageData, note, base)
         setPreview(true)
       }} />
     </div>
@@ -532,7 +535,8 @@ export function MarkdownPane({ patent, editable, stage }: PaneProps & { stage: '
 
 // —— 阶段 5:DOI 撰写 ——
 export function DoiPane({ patent, editable }: PaneProps) {
-  const { saveStageData } = useStore()
+  const { saveStageData, latestVersion } = useStore()
+  const [base] = useState(() => latestVersion(patent.id, 'doi')) // 编辑基准版本
   const [form, setForm] = useState<DoiData>({ ...patent.stageData.doi })
 
   return (
@@ -571,7 +575,7 @@ export function DoiPane({ patent, editable }: PaneProps) {
           />
         </div>
       </div>
-      <SaveBar editable={editable} onSave={(note) => saveStageData(patent.id, 'doi', form, note)} />
+      <SaveBar editable={editable} onSave={(note) => saveStageData(patent.id, 'doi', form, note, base)} />
     </div>
   )
 }

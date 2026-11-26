@@ -22,7 +22,8 @@ def in_scope(p: dict[str, Any], rule: dict[str, Any], cycle: dict[str, Any] | No
     if not cycle or p["visibility"] == "private" or p["createdAt"] > cycle["end"]:
         return False
     arch = p.get("archived")
-    if arch and arch["kind"] == "abandoned" and arch["at"][:10] <= add_days(cycle["end"], -int(cfg["overdue"]["abandonExcludeDays"])):
+    # 决策 36:放弃日「早于」周期结束前 N 天才退出分母(分界日当天放弃仍计入)
+    if arch and arch["kind"] == "abandoned" and arch["at"][:10] < add_days(cycle["end"], -int(cfg["overdue"]["abandonExcludeDays"])):
         return False
     if arch and arch["at"][:10] < cycle["start"]:
         return False
@@ -127,10 +128,14 @@ async def save_rule(ctx: Ctx, rule: dict[str, Any]) -> str:
         cycle = await cur.fetchone()
     if not cycle:
         raise bad_request("请绑定有效的专利周期")
+    if cycle["status"] == "closed":
+        raise conflict("该周期已收口,不能再新建或修改其 KPI 规则(历史得分已冻结)")
     targets = []
     for t in rule.get("targets") or []:
         if t.get("stage") not in STAGE_KEYS or not t.get("deadline"):
             raise bad_request("目标节点非法")
+        if t["deadline"] < cycle["start"]:
+            raise bad_request(f"目标截止日不能早于周期开始日({cycle['start']})")
         targets.append({"stage": t["stage"], "deadline": min(t["deadline"], cycle["end"])})  # 超出周期自动截断
     if not targets:
         raise bad_request("至少需要一个目标节点")
@@ -141,6 +146,10 @@ async def save_rule(ctx: Ctx, rule: dict[str, Any]) -> str:
     if existing:
         if me["role"] == "pl" and existing["team_id"] != me["teamId"]:
             raise forbidden("PL 只能管理本组规则")
+        async with ctx.conn.execute("SELECT status FROM cycles WHERE id = ?", (existing["cycle_id"],)) as cur:
+            old_cycle = await cur.fetchone()
+        if old_cycle and old_cycle["status"] == "closed":
+            raise conflict("该规则所属周期已收口,规则只读(历史得分已冻结)")
         await ctx.conn.execute(
             """UPDATE kpi_rules SET name=?, scope_type=?, team_id=?, cycle_id=?, targets=?, scoring=?, scorer_hook=?,
                updated_at=? WHERE id=?""",

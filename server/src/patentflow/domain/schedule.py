@@ -31,6 +31,10 @@ async def request_extension(ctx: Ctx, pid: str, new_due: str, reason: str) -> st
     used = sum(days_between(e["oldDue"], e["newDue"]) for e in p["extensions"]
                if e["stage"] == p["stage"] and e["status"] == "applied")
     auto = used + days <= int(ctx.cfg["overdue"]["extensionApprovalThreshold"])
+    if not auto and p["visibility"] == "private" and ctx.me["role"] == "user":
+        # 私有草案对 PL/GL 不可见,无人能审批;PL/GL 负责人可按决策 35 自批
+        raise bad_request(f"私有草案的延期需在 {ctx.cfg['overdue']['extensionApprovalThreshold']} 天内"
+                          "(含已生效延期);如需更长,请先改为团队可见再申请审批", code="private_over_threshold")
     status = "applied" if auto else "pending"
     await ctx.conn.execute(
         """INSERT INTO extensions(id, patent_id, stage, old_due, new_due, reason, by_user, at, status)
@@ -49,13 +53,19 @@ async def request_extension(ctx: Ctx, pid: str, new_due: str, reason: str) -> st
 
 async def review_extension(ctx: Ctx, pid: str, ext_id: str, approve: bool) -> None:
     p = await get_visible(ctx, pid)
-    if not access.is_team_manager(ctx.me, p) or p["visibility"] == "private":
+    self_owned = p["ownerId"] == ctx.me["id"] and ctx.me["role"] in ("pl", "gl")
+    if not (access.is_team_manager(ctx.me, p) and (p["visibility"] != "private" or self_owned)):
         raise forbidden("仅本组 PL 或 GL 可审批延期")
     e = next((x for x in p["extensions"] if x["id"] == ext_id), None)
     if not e:
         raise not_found("延期申请")
     if e["status"] != "pending":
         raise conflict("该申请已处理或已作废")
+    if approve:
+        # 批准时按当前跨周期标记与周期结束日复核(申请后 GL 可能取消了跨周期标记)
+        c = await cycle_of(ctx.conn, p["createdAt"])
+        if c and not p["crossCycle"] and e["newDue"] > c["end"]:
+            raise conflict(f"申请的截止日已超出所属周期结束日({c['end']}),只能驳回", reason="beyond_cycle")
     self_approved = 1 if (e["by"] == ctx.me["id"] or p["ownerId"] == ctx.me["id"]) else 0
     await ctx.conn.execute(
         "UPDATE extensions SET status = ?, approved_by = ?, self_approved = ? WHERE id = ?",

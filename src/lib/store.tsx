@@ -158,7 +158,10 @@ interface Store {
   canDeletePatent: (p: Patent) => boolean
   activeUsers: User[]
 
-  saveStageData: (patentId: string, stage: StageKey, data: unknown, note: string) => Promise<void>
+  // baseVersion:表单打开时的版本(乐观锁基准);不传则以当前最新版本为基准(用于恢复旧版本等显式覆盖)
+  saveStageData: (patentId: string, stage: StageKey, data: unknown, note: string, baseVersion?: number) => Promise<void>
+  latestVersion: (patentId: string, stage: StageKey) => number
+  formEpoch: number // 保存成功 / 冲突处理后递增,阶段表单据此重新载入
   advance: (patentId: string, reason: string) => Promise<void>
   rollback: (patentId: string, to: StageKey, reason: string) => Promise<void>
   inviteReviewer: (patentId: string, userId: string) => Promise<void>
@@ -248,6 +251,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [providers, setProviders] = useState<Providers>({ local: true, demo: false, sso: [] })
   const [error, setError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<StageConflict | null>(null)
+  const [formEpoch, setFormEpoch] = useState(0)
 
   const reload = useCallback(async () => {
     try {
@@ -359,6 +363,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await api.patch(`${P(pid)}/stages/${stage}`, { data, note, baseVersion })
       setConflict(null)
       await reload()
+      setFormEpoch((n) => n + 1)
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.extra.reason === 'stale_version') {
         setConflict({
@@ -377,7 +382,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     conflict,
     resolveConflict: async (keep) => {
       if (!conflict) return
-      if (keep === 'theirs') { setConflict(null); return }
+      if (keep === 'theirs') { setConflict(null); setFormEpoch((n) => n + 1); return }
       await saveStage(conflict.patentId, conflict.stage, conflict.mine, conflict.note, conflict.currentVersion)
     },
 
@@ -419,7 +424,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     canEditPatent, canOperatePatent, isReviewerOf, reviewPassCount, reviewGateOpen, reviewRejected,
     hasLeftDraft, canDeletePatent, activeUsers: users.filter((u) => !u.deactivated),
 
-    saveStageData: (pid, stage, data, note) => saveStage(pid, stage, data, note, latestVersion(pid, stage)),
+    saveStageData: (pid, stage, data, note, baseVersion) =>
+      saveStage(pid, stage, data, note, baseVersion ?? latestVersion(pid, stage)),
+    latestVersion, formEpoch,
     // 携带打开确认框时的 rev:他人已先推进/回退则返回 409,避免一次确认连跳两个阶段
     advance: async (pid, reason) => {
       const rev = patents.find((p) => p.id === pid)?.rev

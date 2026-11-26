@@ -19,3 +19,8 @@ async def issue_password_link(conn: aiosqlite.Connection, uid: str, base_url: st
         (sha256(token), uid, now(), (now_dt() + timedelta(minutes=ttl_minutes)).strftime("%Y-%m-%d %H:%M")),
     )
     return f"{base_url.rstrip('/')}/reset?token={token}"
+
+
+async def invalidate_links(conn: aiosqlite.Connection, uid: str) -> None:
+    """密码一经设置(重置 / 修改 / 管理员重置),此前签发的激活与重置链接全部作废。"""
+    await conn.execute("UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0", (uid,))

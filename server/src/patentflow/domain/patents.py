@@ -250,6 +250,7 @@ async def migrate_team(ctx: Ctx, pid: str, team_id: str) -> None:
     if not t:
         raise bad_request("团队不存在")
     await bump(ctx, pid, team_id=team_id)
+    p["teamId"] = team_id  # 按迁移后的团队解析收件人
     await notify(ctx, "transition", f"《{p['title']}》已迁移至「{t['name']}」", p)
 
 

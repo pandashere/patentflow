@@ -80,8 +80,9 @@ async def reports_for(db: Database, me: dict[str, Any], rules: list[dict[str, An
         else:
             rep = kpi.compute(rule, patents, transitions, cycles, cfg)
         # 收口快照可能含后来改回私有的草案:当前私有且对我不可见的明细一律剔除(决策 9)
-        hidden_private = {p["id"] for p in patents if p["visibility"] == "private" and p["id"] not in visible}
-        rep = {**rep, "items": [i for i in rep["items"] if i["patentId"] not in hidden_private]}
+        # 已删除的专利同样剔除;冻结的总分与件数按决策 21 保持不变
+        shown = {p["id"] for p in patents if p["visibility"] != "private" or p["id"] in visible}
+        rep = {**rep, "items": [i for i in rep["items"] if i["patentId"] in shown]}
         out[rule["id"]] = rep if me["role"] == "gl" else kpi.redact(rep, visible)
     return out
 
