@@ -40,7 +40,7 @@ async def seed(db: Database, *, force: bool = False) -> dict[str, int]:
             await conn.execute("INSERT OR REPLACE INTO teams(id, name, pl_id) VALUES(?,?,?)", (t["id"], t["name"], t["plId"]))
         pwd = hash_password(DEMO_PASSWORD)
         for u in data["users"]:
-            # 启动引导可能已按配置文件 admins 用随机 id 建号:按邮箱对齐到种子 id
+            # 同邮箱账号已存在(例如系统管理员先建过号):按邮箱对齐到种子 id
             await conn.execute("UPDATE users SET id = ? WHERE email = ? AND id != ?", (u["id"], u["email"], u["id"]))
             await conn.execute(
                 """INSERT INTO users(id, name, email, title, role, team_id, password_hash, created_at)

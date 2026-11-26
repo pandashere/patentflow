@@ -19,29 +19,6 @@ def test_login_and_me_requires_auth(client) -> None:  # type: ignore[no-untyped-
     assert r.status_code == 200 and r.json()["user"]["id"] == "u1"
 
 
-def test_bootstrap_admin_is_gl(client) -> None:  # type: ignore[no-untyped-def]
-    db_exec(client, "UPDATE users SET role='user' WHERE email='admin@corp.local'")
-    # 重启引导会恢复为 GL
-    import asyncio
-
-    from patentflow.bootstrap import ensure_bootstrap
-
-    asyncio.run(_reboot(client, ensure_bootstrap))
-    import sqlite3
-
-    with sqlite3.connect(client.app.state.settings.db_path) as c:
-        assert c.execute("SELECT role FROM users WHERE email='admin@corp.local'").fetchone()[0] == "gl"
-
-
-async def _reboot(client, fn):  # type: ignore[no-untyped-def]
-    from patentflow.db import Database
-
-    db = Database(client.app.state.settings.db_path)
-    await db.connect()
-    await fn(db, client.app.state.settings)
-    await db.close()
-
-
 def test_forgot_and_reset_password_invalidates_sessions(client) -> None:  # type: ignore[no-untyped-def]
     email = setup(client)
     client.post("/api/auth/login", json={"email": email, "password": PWD})

@@ -1,11 +1,13 @@
-"""启动引导:建表后确保配置文件管理员存在且为 GL(防锁死的恢复通道)。"""
+"""启动引导:建表后初始化业务配置。
+
+账号兜底不再依赖「某些业务用户保底为 GL」,而是由配置文件中的系统管理员(sysadmin)负责:
+它不是业务用户,登录独立后台,可重置密码、恢复账号、指定 GL、为首次部署建团队与首个 GL。
+"""
 from __future__ import annotations
 
 from .config import Settings
 from .db import Database
 from .domain.sysconfig import get_system, merged_defaults, save_system
-from .security import new_id
-from .timeutil import now
 
 
 async def ensure_bootstrap(db: Database, settings: Settings) -> None:
@@ -15,24 +17,4 @@ async def ensure_bootstrap(db: Database, settings: Settings) -> None:
         if not has_cfg:
             await save_system(conn, merged_defaults(settings.initial_business))
         else:
-            cfg = await get_system(conn)
-            await save_system(conn, cfg)
-
-        if settings.admins:
-            async with conn.execute("SELECT id FROM teams ORDER BY id LIMIT 1") as cur:
-                team = await cur.fetchone()
-            team_id = team["id"] if team else "t-default"
-            if not team:
-                await conn.execute("INSERT INTO teams(id, name, pl_id) VALUES('t-default', '默认团队', NULL)")
-            for email in settings.admins:
-                async with conn.execute("SELECT id, role FROM users WHERE email = ?", (email,)) as cur:
-                    u = await cur.fetchone()
-                if u is None:
-                    await conn.execute(
-                        "INSERT INTO users(id, name, email, role, team_id, created_at) VALUES(?,?,?,?,?,?)",
-                        (new_id("u-"), email.split("@")[0], email, "gl", team_id, now()),
-                    )
-                elif u["role"] != "gl":
-                    await conn.execute(
-                        "UPDATE users SET role='gl', session_epoch = session_epoch + 1 WHERE id=?", (u["id"],)
-                    )
+            await save_system(conn, await get_system(conn))

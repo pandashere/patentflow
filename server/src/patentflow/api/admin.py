@@ -180,8 +180,6 @@ async def update_me(body: ProfileIn, request: Request, auth: Auth = Depends(curr
         if body.name is not None and body.name.strip():
             await ctx.conn.execute("UPDATE users SET name = ? WHERE id = ?", (body.name.strip(), auth.id))
         if body.email is not None and body.email.strip().lower() != auth.user["email"].lower():
-            if auth.user["email"].lower() in settings.admins:
-                raise forbidden("配置文件管理员的邮箱只能在配置文件中修改")
             async with ctx.conn.execute("SELECT 1 FROM users WHERE email = ? AND id != ?", (body.email.strip(), auth.id)) as c:
                 if await c.fetchone():
                     raise DomainError(409, "conflict", "该邮箱已被占用")
@@ -278,7 +276,6 @@ async def bootstrap(auth: Auth = Depends(current_auth), db: Database = Depends(g
         "me": me_,
         "users": await load_users(db.reader),  # type: ignore[arg-type]
         "teams": await teams_json(db),
-        "configAdmins": settings.admins,
         "config": cfg,
         "patents": [public_patent(p) for p in patents],
         "versions": await load_versions(db.reader, ids),  # type: ignore[arg-type]

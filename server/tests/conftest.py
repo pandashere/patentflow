@@ -26,8 +26,8 @@ def notifier() -> LoggingNotifier:
 
 @pytest.fixture
 def app(tmp_path, notifier):  # type: ignore[no-untyped-def]
-    s = Settings(db_path=str(tmp_path / "t.db"), admins=["admin@corp.local"], demo=True,
-                 reminder_interval_seconds=0)
+    s = Settings(db_path=str(tmp_path / "t.db"), demo=True, reminder_interval_seconds=0,
+                 sysadmin_username="admin", sysadmin_password="rescue-me-123")
     return create_app(s, notifier)
 
 

@@ -56,8 +56,8 @@ async def update_member(ctx: Ctx, uid: str, patch: dict[str, Any]) -> None:
     if "role" in patch and patch["role"] != u["role"]:
         if patch["role"] not in ROLES:
             raise bad_request("角色非法")
-        if u["email"].lower() in ctx.settings.admins and patch["role"] != "gl":
-            raise forbidden("配置文件管理员不可在 UI/API 中降级,请修改 patentflow.config.yaml 并重启")
+        if uid == ctx.me["id"] and patch["role"] != "gl":
+            raise bad_request("不能降级自己;如需调整请由其他 GL 或系统管理员操作")
         sets["role"] = patch["role"]
     if "teamId" in patch and patch["teamId"] != u["team_id"]:
         await _team(ctx, patch["teamId"])
@@ -66,8 +66,6 @@ async def update_member(ctx: Ctx, uid: str, patch: dict[str, Any]) -> None:
         if k in patch and str(patch[k]).strip():
             sets[k] = str(patch[k]).strip()
     if "email" in patch and str(patch["email"]).strip().lower() != u["email"].lower():
-        if u["email"].lower() in ctx.settings.admins:
-            raise forbidden("配置文件管理员的邮箱只能在配置文件中修改")
         sets["email"] = str(patch["email"]).strip().lower()
     if not sets:
         return
@@ -87,8 +85,6 @@ async def deactivate(ctx: Ctx, uid: str, assignments: dict[str, str]) -> dict[st
         raise not_found("成员")
     if u["deactivated_at"]:
         raise conflict("该成员已停用")
-    if u["email"].lower() in ctx.settings.admins:
-        raise forbidden("配置文件管理员不可停用")
     all_p = await load_patents(ctx.conn)
     owned = [p for p in all_p if p["ownerId"] == uid]
     missing = [p["id"] for p in owned if p["visibility"] != "private" and p["id"] not in assignments]

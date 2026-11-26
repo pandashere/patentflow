@@ -28,11 +28,9 @@ def test_offboarding_requires_assignment_and_hides_private(client) -> None:  # t
     assert client.post("/api/users/u1/reactivate", headers=H("gl")).status_code == 200
 
 
-def test_config_admin_protected_and_role_change(client) -> None:  # type: ignore[no-untyped-def]
+def test_role_change(client) -> None:  # type: ignore[no-untyped-def]
     world(client)
-    users = client.get("/api/users", headers=H("gl")).json()
-    admin = next(u for u in users if u["email"] == "admin@corp.local")
-    assert client.patch(f"/api/users/{admin['id']}", json={"role": "user"}, headers=H("gl")).status_code == 403
+    assert client.patch("/api/users/gl", json={"role": "user"}, headers=H("gl")).status_code == 400  # 不能降级自己
     assert client.patch("/api/users/u2", json={"role": "pl"}, headers=H("u1")).status_code == 403
     assert client.patch("/api/users/u2", json={"role": "pl", "teamId": "t2"}, headers=H("gl")).json()["role"] == "pl"
     r = client.post("/api/users", json={"name": "新人", "email": "new@corp.local", "teamId": "t1"}, headers=H("gl"))

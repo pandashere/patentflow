@@ -25,7 +25,10 @@ class SsoProviderConf:
 @dataclass
 class Settings:
     db_path: str = "./patentflow.db"
-    admins: list[str] = field(default_factory=list)
+    # 系统管理员(兜底账号):不是业务用户,只用于账号救援;用户名/密码直接来自配置
+    sysadmin_username: str = ""
+    sysadmin_password: str = ""  # 明文(建议经环境变量注入)
+    sysadmin_password_hash: str = ""  # 或 scrypt 哈希(patentflow hash-password 生成)
     timezone: str = "Asia/Shanghai"
     local_auth_enabled: bool = True
     session_ttl_hours: int = 12
@@ -74,7 +77,9 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     ]
     return Settings(
         db_path=os.environ.get("PATENTFLOW_DB", db.removeprefix("sqlite:///")),
-        admins=[a.strip().lower() for a in raw.get("admins") or []],
+        sysadmin_username=str((raw.get("sysadmin") or {}).get("username", "") or ""),
+        sysadmin_password=str((raw.get("sysadmin") or {}).get("password", "") or ""),
+        sysadmin_password_hash=str((raw.get("sysadmin") or {}).get("password_hash", "") or ""),
         timezone=raw.get("timezone", "Asia/Shanghai"),
         local_auth_enabled=bool(auth.get("local_enabled", True)),
         session_ttl_hours=int(auth.get("session_ttl_hours", 12)),
@@ -93,3 +98,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         },
         static_dir=raw.get("static_dir") or os.environ.get("PATENTFLOW_STATIC"),
     )
+
+
+def sysadmin_enabled(s: Settings) -> bool:
+    return bool(s.sysadmin_username and (s.sysadmin_password or s.sysadmin_password_hash))
