@@ -273,7 +273,7 @@ export default function Profile() {
             </div>
           </div>
           <div className="border-t pt-4">
-            <div className="ui-label text-slate-500">免打扰时段(该时段内提醒延后到结束后合并发送)</div>
+            <div className="ui-label text-slate-500">免打扰时段(该时段内只进站内通知中心,不推送到邮件 / IM;账号安全事件除外)</div>
             <div className="mt-2 flex items-center gap-2 text-sm">
               <input
                 type="time" value={qStart ?? '22:00'}
@@ -290,6 +290,7 @@ export default function Profile() {
               />
             </div>
           </div>
+          <NotifySelfTest />
         </div>
       </section>
 
@@ -387,5 +388,46 @@ function BatchTransfer() {
         )}
       </div>
     </section>
+  )
+}
+
+// —— 通知自检:给自己发一条测试通知,并说明站内 / 回调各自是否送达 ——
+function NotifySelfTest() {
+  const { notifyMeTest } = useStore()
+  const [busy, setBusy] = useState(false)
+  const [r, setR] = useState<Awaited<ReturnType<typeof notifyMeTest>>>(null)
+  const EV: Record<string, string> = { review: '审查动态', due: '截止提醒', transition: '阶段流转' }
+  return (
+    <div className="border-t pt-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">通知自检</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">给自己发一条测试通知,确认站内通知与外部推送(邮件 / IM 回调)是否畅通</div>
+        </div>
+        <button
+          type="button" disabled={busy}
+          onClick={async () => { setBusy(true); setR(await notifyMeTest()); setBusy(false) }}
+          className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
+        >
+          {busy ? '发送中…' : '发送测试通知'}
+        </button>
+      </div>
+      {r && (
+        <ul className="mt-3 space-y-1.5 rounded-md border bg-slate-50/70 px-3.5 py-3 text-[13px]">
+          <li className="text-teal-700">✓ 站内通知已送达 —— 右上角铃铛里可以看到</li>
+          {!r.webhookConfigured ? (
+            <li className="text-slate-500">· 系统尚未配置外部回调,通知只在站内可见(如需邮件 / IM 推送请联系 GL)</li>
+          ) : r.webhook?.ok ? (
+            <li className="text-teal-700">✓ 外部回调连通正常(HTTP {r.webhook.status},{r.webhook.latencyMs} ms)</li>
+          ) : (
+            <li className="text-red-600">✗ 外部回调失败:{r.webhook?.error ?? '未知错误'} —— 请联系 GL 检查回调地址</li>
+          )}
+          {r.quietNow && <li className="text-amber-700">· 现在处于你的免打扰时段({r.quietHours}),平时的通知此刻不会推送到外部</li>}
+          {r.mutedEvents.length > 0 && (
+            <li className="text-amber-700">· 你已关闭:{r.mutedEvents.map((e) => EV[e] ?? e).join('、')},这些事件不会通知你</li>
+          )}
+        </ul>
+      )}
+    </div>
   )
 }

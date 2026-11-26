@@ -784,8 +784,11 @@ function CompareDialog({
 
 // —— 每阶段通知人配置 ——
 function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => void }) {
-  const { patents, saveNotifyConfig, users } = useStore()
+  const { patents, saveNotifyConfig, users, previewNotify } = useStore()
   const patent = patents.find((p) => p.id === patentId)!
+  const [pvEvent, setPvEvent] = useState<NotifyEvent>('transition')
+  const [pv, setPv] = useState<Awaited<ReturnType<typeof previewNotify>>>(null)
+  const [pvBusy, setPvBusy] = useState(false)
 
   const [cfgs, setCfgs] = useState<StageNotifyConfig[]>(() =>
     STAGES.map((s) => {
@@ -802,8 +805,10 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
     }),
   )
 
-  const update = (stage: StageKey, patch: Partial<StageNotifyConfig>) =>
+  const update = (stage: StageKey, patch: Partial<StageNotifyConfig>) => {
+    setPv(null) // 配置变了,旧的预演结果作废
     setCfgs((cs) => cs.map((c) => (c.stage === stage ? { ...c, ...patch } : c)))
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
@@ -881,6 +886,55 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
               </div>
             </div>
           ))}
+        </div>
+
+        {/* 送达预演:按当前(未保存的)配置,看「当前阶段」某类事件会通知到谁,并测试回调 */}
+        <div className="mt-5 rounded-lg border border-dashed bg-slate-50/60 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">送达预演</span>
+            <span className="text-xs text-muted-foreground">当前阶段「{stageLabel(patent.stage)}」发生</span>
+            <select
+              value={pvEvent}
+              onChange={(e) => { setPvEvent(e.target.value as NotifyEvent); setPv(null) }}
+              className="rounded border bg-white px-1.5 py-1 text-xs outline-none focus:border-teal-600"
+              aria-label="事件类型"
+            >
+              {ALL_EVENTS.map((ev) => <option key={ev} value={ev}>{NOTIFY_EVENT_LABEL[ev]}</option>)}
+            </select>
+            <span className="text-xs text-muted-foreground">时</span>
+            <button
+              type="button" disabled={pvBusy}
+              onClick={async () => { setPvBusy(true); setPv(await previewNotify(patentId, pvEvent, cfgs)); setPvBusy(false) }}
+              className="ml-auto rounded-md border bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
+            >
+              {pvBusy ? '预演中…' : '预演送达并测试回调'}
+            </button>
+          </div>
+          {pv && (
+            <div className="mt-3 space-y-1.5 text-[13px]">
+              {pv.recipients.length === 0 ? (
+                <p className="text-amber-700">按当前配置,这类事件不会通知任何人。</p>
+              ) : (
+                pv.recipients.map((r) => (
+                  <div key={r.id} className="flex items-center gap-2">
+                    <span className={r.delivered ? 'text-teal-700' : 'text-slate-400'}>{r.delivered ? '✓' : '✗'}</span>
+                    <span className={cn('font-medium', !r.delivered && 'text-slate-400 line-through')}>{r.name}</span>
+                    {r.reason && <span className="text-xs text-slate-500">{r.reason}</span>}
+                  </div>
+                ))
+              )}
+              <div className="border-t pt-2 text-xs">
+                {!pv.webhookConfigured ? (
+                  <span className="text-slate-500">系统未配置外部回调:以上收件人只会在站内通知中心看到。</span>
+                ) : pv.webhook?.ok ? (
+                  <span className="text-teal-700">外部回调连通正常(HTTP {pv.webhook.status},{pv.webhook.latencyMs} ms)。</span>
+                ) : (
+                  <span className="text-red-600">外部回调失败:{pv.webhook?.error ?? '未知错误'},请联系 GL 检查回调地址。</span>
+                )}
+                <span className="ml-1 text-slate-400">预演不会真的发送通知;实际发生时不会通知操作者本人。</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-5 flex justify-end gap-2 border-t pt-4">
