@@ -22,6 +22,7 @@ export default function Admin() {
   const {
     me, config, setConfig, users, updateMember, addMember,
     tokens, adminRevokeToken, patents, transitions, versions, kpiRules,
+    cycles, saveCycle, closeCycle,
   } = useStore()
   const isGl = me.role === 'gl'
   const myTeamUsers = users.filter((u) => me.role === 'gl' || u.teamId === me.teamId)
@@ -29,6 +30,7 @@ export default function Admin() {
   const [adding, setAdding] = useState(false)
   const [newbie, setNew] = useState({ name: '', email: '', title: '', teamId: 't1', role: 'user' as Role })
   const [exported, setExported] = useState('')
+  const [newCycle, setNewCycle] = useState({ name: '', start: '', end: '' })
 
   const download = (filename: string, content: string, type: string) => {
     const blob = new Blob([content], { type })
@@ -341,6 +343,170 @@ export default function Admin() {
                 />
               </label>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 专利周期 */}
+      <section>
+        <h3 className="mb-3 text-sm font-semibold">专利周期(项目级时间窗口)</h3>
+        <div className="space-y-4 rounded-lg border bg-card p-5">
+          <p className="text-xs text-muted-foreground">
+            周期由 GL 定义项目的整体专利窗口;任何人自定的阶段周期、KPI 目标截止日都必须落在周期内(超出自动截断)。
+            专利按创建日归入周期;周期收口后 KPI 冻结为快照,未完成的专利转入逾期管理或由 GL 标记跨周期。
+          </p>
+          <div className="divide-y rounded-md border">
+            {cycles.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {c.name}
+                    <span className={cn(
+                      'rounded-full px-2 py-px text-[10px] font-medium',
+                      c.status === 'active' ? 'bg-teal-50 text-teal-700' : 'bg-slate-200 text-slate-500',
+                    )}>
+                      {c.status === 'active' ? '进行中' : '已收口'}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 font-mono-x text-xs text-muted-foreground">
+                    {c.start} ~ {c.end}
+                    {c.closedAt && <span className="ml-2">收口于 {c.closedAt}</span>}
+                  </div>
+                </div>
+                {isGl && c.status === 'active' && (
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      结束日
+                      <input
+                        type="date"
+                        value={c.end}
+                        onChange={(e) => saveCycle({ ...c, end: e.target.value })}
+                        className={cn(inputCls, 'py-1')}
+                        aria-label={`${c.name} 结束日`}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => closeCycle(c.id)}
+                      className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                    >
+                      收口
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {isGl && (
+            <div className="flex flex-wrap items-end gap-2 rounded-md border border-dashed p-3">
+              <label className="block">
+                <span className="ui-label text-slate-500">周期名称</span>
+                <input
+                  value={newCycle.name}
+                  onChange={(e) => setNewCycle({ ...newCycle, name: e.target.value })}
+                  placeholder="如 2027 年度"
+                  className={cn(inputCls, 'mt-1 w-32')}
+                />
+              </label>
+              <label className="block">
+                <span className="ui-label text-slate-500">开始</span>
+                <input type="date" value={newCycle.start} onChange={(e) => setNewCycle({ ...newCycle, start: e.target.value })} className={cn(inputCls, 'mt-1')} aria-label="周期开始" />
+              </label>
+              <label className="block">
+                <span className="ui-label text-slate-500">结束</span>
+                <input type="date" value={newCycle.end} onChange={(e) => setNewCycle({ ...newCycle, end: e.target.value })} className={cn(inputCls, 'mt-1')} aria-label="周期结束" />
+              </label>
+              <button
+                type="button"
+                disabled={!newCycle.name.trim() || !newCycle.start || !newCycle.end || newCycle.end <= newCycle.start}
+                onClick={() => {
+                  saveCycle({
+                    id: `c${Date.now()}`, name: newCycle.name.trim(),
+                    start: newCycle.start, end: newCycle.end, status: 'active',
+                  })
+                  setNewCycle({ name: '', start: '', end: '' })
+                }}
+                className="rounded-md bg-teal-700 px-4 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40"
+              >
+                新建周期
+              </button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 逾期策略 */}
+      <section>
+        <h3 className="mb-3 text-sm font-semibold">逾期策略</h3>
+        <div className="space-y-4 rounded-lg border bg-card p-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">延期审批阈值(天)</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                单次延期 ≤ 该值自动生效;超过则挂起,需本组 PL 或 GL 批准后才改 due date
+              </div>
+            </div>
+            <input
+              type="number" min={1} max={90}
+              value={config.overdue.extensionApprovalThreshold}
+              disabled={!isGl}
+              onChange={(e) =>
+                setConfig({ ...config, overdue: { ...config.overdue, extensionApprovalThreshold: Math.max(1, Number(e.target.value)) } })
+              }
+              className={cn(inputCls, 'w-20 text-center font-mono-x')}
+              aria-label="延期审批阈值"
+            />
+          </div>
+
+          {([
+            ['freezeAdvanceOnOverdue', '阶段逾期时冻结推进', '开启后,当前阶段已逾期的专利不能推进到下一阶段,须先申请延期或调整截止日'],
+            ['includeCrossCycleInKpi', '跨周期专利计入 KPI', 'GL 标记为跨周期的专利,其周期内的阶段推进事件是否计入 KPI 分子/分母'],
+          ] as const).map(([key, label, desc]) => (
+            <div key={key} className="flex flex-wrap items-center gap-3 border-t pt-4">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{label}</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">{desc}</div>
+              </div>
+              <button
+                type="button"
+                disabled={!isGl}
+                onClick={() => setConfig({ ...config, overdue: { ...config.overdue, [key]: !config.overdue[key] } })}
+                className={cn(
+                  'relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600',
+                  config.overdue[key] ? 'bg-teal-600' : 'bg-slate-300',
+                )}
+                role="switch"
+                aria-checked={config.overdue[key]}
+                aria-label={label}
+              >
+                <span className={cn('absolute top-0.5 size-5 rounded-full bg-white shadow transition-all', config.overdue[key] ? 'left-[22px]' : 'left-0.5')} />
+              </button>
+            </div>
+          ))}
+
+          <div className="flex flex-wrap items-center gap-3 border-t pt-4">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">自动催办节奏</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                逾期后按节奏自动给负责人发催办通知(demo 为配置占位,实际由后端定时任务执行)
+              </div>
+            </div>
+            <div className="flex gap-1.5">
+              {([['off', '关闭'], ['3d', '每 3 天'], ['7d', '每 7 天']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  disabled={!isGl}
+                  onClick={() => setConfig({ ...config, overdue: { ...config.overdue, autoNudge: v } })}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600',
+                    config.overdue.autoNudge === v ? 'border-[#12141f] bg-[#12141f] text-white' : 'text-slate-500 hover:bg-slate-50',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </section>

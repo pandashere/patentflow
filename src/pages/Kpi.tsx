@@ -7,10 +7,11 @@ import { SectionTitle, StagePill } from '@/components/pf'
 import { Check, Code2, Pause, Pencil, Play, Plus, X } from 'lucide-react'
 
 export default function Kpi() {
-  const { me, kpiRules, patents, transitions, saveKpiRule, toggleKpiRule, userById } = useStore()
+  const { me, kpiRules, patents, transitions, saveKpiRule, toggleKpiRule, userById, cycles, config, snapshots, activeCycle } = useStore()
   const canManage = me.role === 'gl' || me.role === 'pl'
   const [editing, setEditing] = useState<KpiRule | null>(null)
   const [openReport, setOpenReport] = useState<string | null>(null)
+  const defaultCycleId = activeCycle()?.id ?? cycles[0]?.id ?? ''
 
   const myRules = kpiRules.filter((r) => {
     if (me.role === 'gl') return true
@@ -32,7 +33,7 @@ export default function Kpi() {
                   id: `k${Date.now()}`,
                   name: '',
                   scope: { type: me.role === 'gl' ? 'global' : 'team', teamId: me.role === 'pl' ? me.teamId : undefined },
-                  windowStart: '2026-07-01',
+                  cycleId: defaultCycleId,
                   targets: [{ stage: 'patentability', deadline: '2026-12-31' }],
                   scorerHook: null,
                   enabled: true,
@@ -51,7 +52,13 @@ export default function Kpi() {
 
       <div className="space-y-4">
         {myRules.map((r) => {
-          const report = computeKpi(r, patents, transitions)
+          const rc = cycles.find((c) => c.id === r.cycleId)
+          const snap = snapshots.find((s) => s.ruleId === r.id)
+          // 周期已收口:展示冻结快照,不再实时计算
+          const report = rc?.status === 'closed' && snap
+            ? { rule: r, items: snap.items, overall: snap.overall }
+            : computeKpi(r, patents, transitions, cycles, config)
+          const frozen = rc?.status === 'closed'
           const pct = Math.round(report.overall * 100)
           const open = openReport === r.id
           return (
@@ -72,7 +79,10 @@ export default function Kpi() {
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                     <span>{r.scope.type === 'global' ? '范围:全员' : `范围:${teamName(r.scope.teamId!)}`}</span>
-                    <span>基准:自 {r.windowStart} 起在册专利</span>
+                    <span>
+                      周期:{rc ? `${rc.name}(${rc.start} ~ ${rc.end})` : '未绑定'}
+                      {frozen && <span className="ml-1 rounded bg-slate-200 px-1 py-px text-[10px] text-slate-500">已收口冻结</span>}
+                    </span>
                     <span>
                       目标:{r.targets.map((t) => `${stageLabel(t.stage)} @ ${t.deadline}`).join(' + ')}
                     </span>
@@ -156,8 +166,10 @@ export default function Kpi() {
                     </tbody>
                   </table>
                   <p className="mt-3 text-[11px] leading-snug text-slate-400">
-                    默认评分器:得分 = 已达成目标数 / 目标总数(「到达过」即算,不受后续回退影响)。
-                    配置 scorerHook 后由你的回调计算单项与整体得分 —— 对应后端 KPI 引擎的 compute_item / compute_kpi 两个回调点。
+                    {frozen
+                      ? '该周期已收口,以上数字为收口时刻的冻结快照,不再随后续流转变化。'
+                      : '事件口径:统计周期窗口内「到达过」目标阶段的流转事件,与专利创建时间无关;跨周期项目各记各的、无双计。'}
+                    默认评分器:得分 = 已达成目标数 / 目标总数。配置 scorerHook 后由你的回调计算 —— 对应后端 KPI 引擎的 compute_item / compute_kpi 两个回调点。
                   </p>
                 </div>
               )}
@@ -188,6 +200,9 @@ function KpiEditor({
   onClose: () => void
 }) {
   const [form, setForm] = useState<KpiRule>(rule)
+  const { cycles } = useStore()
+  const boundCycle = cycles.find((c) => c.id === form.cycleId)
+  const deadlineOverflow = boundCycle ? form.targets.filter((t) => t.deadline > boundCycle.end) : []
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
@@ -234,13 +249,18 @@ function KpiEditor({
               </select>
             </div>
             <div>
-              <label className="ui-label text-slate-500">基准起始日</label>
-              <input
-                type="date"
-                value={form.windowStart}
-                onChange={(e) => setForm({ ...form, windowStart: e.target.value })}
-                className="mt-1.5 w-full rounded-md border px-2.5 py-2 text-sm outline-none focus:border-teal-600"
-              />
+              <label className="ui-label text-slate-500">绑定专利周期</label>
+              <select
+                value={form.cycleId}
+                onChange={(e) => setForm({ ...form, cycleId: e.target.value })}
+                className="mt-1.5 w-full rounded-md border bg-white px-2.5 py-2 text-sm outline-none focus:border-teal-600"
+              >
+                {cycles.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}({c.start} ~ {c.end}){c.status === 'closed' ? '·已收口' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -296,6 +316,11 @@ function KpiEditor({
                 </div>
               ))}
             </div>
+            {deadlineOverflow.length > 0 && boundCycle && (
+              <p className="mt-1.5 text-[11px] text-red-600">
+                {deadlineOverflow.length} 个目标的截止日晚于周期结束日({boundCycle.end}),保存时将按周期结束日截断。
+              </p>
+            )}
           </div>
 
           <div>
@@ -315,8 +340,14 @@ function KpiEditor({
           </button>
           <button
             type="button"
-            disabled={!form.name.trim()}
-            onClick={() => onSave(form)}
+            disabled={!form.name.trim() || !form.cycleId}
+            onClick={() =>
+              onSave(
+                boundCycle
+                  ? { ...form, targets: form.targets.map((t) => ({ ...t, deadline: t.deadline > boundCycle.end ? boundCycle.end : t.deadline })) }
+                  : form,
+              )
+            }
             className={cn('rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40')}
           >
             保存规则

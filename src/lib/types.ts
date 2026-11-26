@@ -128,6 +128,29 @@ export interface ArchivedInfo {
   reason: string
 }
 
+// —— 专利周期(项目级时间窗口,GL 定义;一切自定周期都必须落在其中) ——
+export interface Cycle {
+  id: string
+  name: string
+  start: string // YYYY-MM-DD
+  end: string
+  status: 'active' | 'closed'
+  closedAt?: string
+}
+
+// —— 延期申请(分级审批:≤阈值自动生效,>阈值需 PL/GL 批准) ——
+export interface StageExtension {
+  id: string
+  stage: StageKey
+  oldDue: string
+  newDue: string
+  reason: string
+  by: string
+  at: string
+  status: 'applied' | 'pending' | 'rejected'
+  approvedBy?: string
+}
+
 export interface Patent {
   id: string
   code: string
@@ -137,9 +160,11 @@ export interface Patent {
   teamId: string
   visibility: Visibility
   stage: StageKey
+  crossCycle: boolean // GL 标记:跨周期项目,豁免收口压力(KPI 事件默认照计)
   archived: ArchivedInfo | null
   createdAt: string
   dueDates: Partial<Record<StageKey, string>>
+  extensions: StageExtension[]
   stageData: StageDataMap
   notify: StageNotifyConfig[]
 }
@@ -154,7 +179,7 @@ export interface KpiRule {
   id: string
   name: string
   scope: { type: 'team' | 'global'; teamId?: string }
-  windowStart: string
+  cycleId: string // 绑定专利周期:统计窗口 = 周期起止
   targets: KpiTarget[]
   // 预留:自由计算回调(单项目/整体),默认按比例给分
   scorerHook: string | null
@@ -171,6 +196,13 @@ export interface ReviewDim {
 }
 
 // —— 全局配置 ——
+export interface OverduePolicy {
+  extensionApprovalThreshold: number // 延期天数 ≤ 该值自动生效,否则需 PL/GL 批准
+  freezeAdvanceOnOverdue: boolean // 阶段逾期时是否冻结推进(默认否)
+  autoNudge: 'off' | '3d' | '7d' // 自动催办节奏(demo 仅配置占位)
+  includeCrossCycleInKpi: boolean // 跨周期标记专利是否计入 KPI
+}
+
 export interface SystemConfig {
   reviewPassCount: number // GL 配置:至少 n 名 reviewer 通过
   reviewMinWeighted: number // GL 配置:加权均分下限,低于该值的「通过」不计入门禁
@@ -182,6 +214,7 @@ export interface SystemConfig {
   ssoProviders: { name: string; issuer: string; enabled: boolean }[]
   // 通知默认接收人(事件 × 角色);专利级配置可覆盖
   notifyDefaults: Record<NotifyEvent, { owner: boolean; pl: boolean; gl: boolean }>
+  overdue: OverduePolicy
 }
 
 // —— 个人 API Token ——

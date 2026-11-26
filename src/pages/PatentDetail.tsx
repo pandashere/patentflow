@@ -12,7 +12,7 @@ import {
 import { DoiPane, DraftPane, MarkdownPane, PatentabilityPane } from './panes'
 import type { Page } from '@/components/AppShell'
 import {
-  Archive, ArchiveRestore, ArrowLeft, ArrowRight, Bell, GitCommitVertical, History, RotateCcw,
+  Archive, ArchiveRestore, ArrowLeft, ArrowRight, Bell, CalendarClock, GitCommitVertical, History, RotateCcw,
   UserRoundPlus, Users, X,
 } from 'lucide-react'
 
@@ -33,6 +33,10 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
   const [collabOpen, setCollabOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
   const [transferTo, setTransferTo] = useState('')
+  const [extOpen, setExtOpen] = useState(false)
+  const [extDate, setExtDate] = useState('')
+  const [extReason, setExtReason] = useState('')
+  const [extMsg, setExtMsg] = useState('')
 
   const myVersions = useMemo(
     () => versions.filter((v) => v.patentId === id).slice().reverse(),
@@ -65,13 +69,22 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
   const paneEditable = editable && shownIdx <= curIdx
 
   const privateLocked = patent.stage === 'draft' && patent.visibility === 'private'
+  const overdueDays = store.stageOverdueDays(patent)
+  const cycle = store.cycleOfPatent(patent)
+  const cycleDaysLeft = cycle && cycle.status === 'active'
+    ? Math.floor((Date.parse(cycle.end) - Date.parse(new Date().toISOString().slice(0, 10))) / 86400000)
+    : null
+  const risk = store.closingRisk(patent)
+  const overdueFrozen = config.overdue.freezeAdvanceOnOverdue && overdueDays > 0
   const gateBlocked =
-    (patent.stage === 'patentability' && !store.reviewGateOpen(patent)) || privateLocked
+    (patent.stage === 'patentability' && !store.reviewGateOpen(patent)) || privateLocked || overdueFrozen
   const gateHint = privateLocked
     ? '私有专利只能停留在草案阶段,请先将可见性调整为团队/公开'
-    : patent.stage === 'patentability' && !store.reviewGateOpen(patent)
-      ? `审查门禁未满足:需 ${config.reviewPassCount} 名 reviewer 通过,且加权均分 ≥ ${config.reviewMinWeighted}`
-      : undefined
+    : overdueFrozen
+      ? `当前阶段已逾期 ${overdueDays} 天,GL 已开启「逾期冻结推进」—— 请先申请延期`
+      : patent.stage === 'patentability' && !store.reviewGateOpen(patent)
+        ? `审查门禁未满足:需 ${config.reviewPassCount} 名 reviewer 通过,且加权均分 ≥ ${config.reviewMinWeighted}`
+        : undefined
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -127,6 +140,27 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             <span>·</span>
             <span>当前阶段截止</span>
             <DueChip date={patent.dueDates[patent.stage]} />
+            {overdueDays > 0 && (
+              <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">
+                已逾期 {overdueDays} 天
+              </span>
+            )}
+            {cycle && (
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+                {cycle.name}
+                {cycleDaysLeft !== null && ` · 剩 ${Math.max(0, cycleDaysLeft)} 天`}
+                {cycle.status === 'closed' && ' · 已收口'}
+              </span>
+            )}
+            {patent.crossCycle && (
+              <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">跨周期项目</span>
+            )}
+            {risk === 'tight' && (
+              <span className="rounded border border-amber-300 px-1.5 py-0.5 text-[11px] text-amber-600">收口紧张</span>
+            )}
+            {risk === 'doomed' && (
+              <span className="rounded border border-red-300 px-1.5 py-0.5 text-[11px] text-red-600">收口注定逾期</span>
+            )}
           </div>
         </div>
 
@@ -181,6 +215,31 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
                   <Archive className="size-3.5" />
                   归档
                 </button>
+                {patent.dueDates[patent.stage] && (
+                  <button
+                    type="button"
+                    onClick={() => { setExtOpen(true); setExtDate(''); setExtReason(''); setExtMsg('') }}
+                    className="flex items-center gap-1.5 rounded-md border bg-white px-3 py-2 text-[13px] font-medium text-slate-600 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                  >
+                    <CalendarClock className="size-3.5" />
+                    申请延期
+                  </button>
+                )}
+                {store.me.role === 'gl' && (
+                  <button
+                    type="button"
+                    onClick={() => store.toggleCrossCycle(patent.id)}
+                    title="跨周期项目豁免收口压力,due date 不受周期结束日截断"
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-md border px-3 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600',
+                      patent.crossCycle
+                        ? 'border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100'
+                        : 'bg-white text-slate-600 hover:bg-slate-50',
+                    )}
+                  >
+                    {patent.crossCycle ? '取消跨周期' : '标记跨周期'}
+                  </button>
+                )}
                 {curIdx > 0 && (
                   <button
                     type="button"
@@ -301,6 +360,62 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
               每次保存生成只增不改的版本快照;恢复旧版本 = 以旧内容生成新版本,历史永不丢失。
             </p>
           </div>
+
+          {/* 延期记录 */}
+          {patent.extensions.length > 0 && (
+            <div className="rounded-lg border bg-card p-4">
+              <div className="mb-3 flex items-center gap-1.5">
+                <CalendarClock className="size-4 text-slate-400" />
+                <span className="ui-label text-slate-500">延期记录</span>
+              </div>
+              <div className="space-y-3">
+                {patent.extensions.slice().reverse().map((e) => {
+                  const canApprove =
+                    e.status === 'pending'
+                    && (store.me.role === 'gl' || (store.me.role === 'pl' && store.me.teamId === patent.teamId))
+                  return (
+                    <div key={e.id} className="border-b pb-3 last:border-0 last:pb-0">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-medium">{stageLabel(e.stage)}</span>
+                        <span className="font-mono-x text-[11px] text-slate-500">{e.oldDue} → {e.newDue}</span>
+                        <span className={cn(
+                          'ml-auto rounded px-1.5 py-px text-[10px] font-medium',
+                          e.status === 'applied' && 'bg-teal-50 text-teal-700',
+                          e.status === 'pending' && 'bg-amber-50 text-amber-700',
+                          e.status === 'rejected' && 'bg-red-50 text-red-600',
+                        )}>
+                          {e.status === 'applied' ? '已生效' : e.status === 'pending' ? '待审批' : '已驳回'}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{e.reason}</p>
+                      <p className="text-[11px] text-slate-400">
+                        {userById(e.by).name} · {e.at}
+                        {e.approvedBy && ` · 审批 ${userById(e.approvedBy).name}`}
+                      </p>
+                      {canApprove && (
+                        <div className="mt-1.5 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => store.reviewExtension(patent.id, e.id, true)}
+                            className="rounded border border-teal-600 px-2.5 py-0.5 text-[11px] font-medium text-teal-700 hover:bg-teal-50"
+                          >
+                            批准
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => store.reviewExtension(patent.id, e.id, false)}
+                            className="rounded border border-red-300 px-2.5 py-0.5 text-[11px] font-medium text-red-600 hover:bg-red-50"
+                          >
+                            驳回
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="rounded-lg border bg-card p-4">
             <div className="mb-3 flex items-center gap-1.5">
@@ -432,6 +547,69 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
 
       {/* 通知设置 */}
       {notifyOpen && <NotifyDialog patentId={patent.id} onClose={() => setNotifyOpen(false)} />}
+
+      {/* 申请延期 */}
+      {extOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setExtOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold">申请延期 · {stageLabel(patent.stage)}阶段</h3>
+              <button type="button" onClick={() => setExtOpen(false)} className="rounded p-1 hover:bg-slate-100" aria-label="关闭">
+                <X className="size-4" />
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              当前截止 {patent.dueDates[patent.stage]}。延期 ≤ {config.overdue.extensionApprovalThreshold} 天自动生效;
+              超过需本组 PL 或 GL 批准。
+              {cycle && !patent.crossCycle && `不可超出所属周期结束日(${cycle.end})。`}
+              {patent.crossCycle && '本专利为跨周期项目,不受周期结束日限制。'}
+            </p>
+            <label className="mt-3 block ui-label text-slate-500">新截止日</label>
+            <input
+              type="date"
+              value={extDate}
+              min={patent.dueDates[patent.stage]}
+              onChange={(e) => { setExtDate(e.target.value); setExtMsg('') }}
+              className="mt-1 w-full rounded-md border px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20"
+            />
+            <label className="mt-3 block ui-label text-slate-500">延期原因(必填)</label>
+            <textarea
+              rows={2}
+              value={extReason}
+              onChange={(e) => setExtReason(e.target.value)}
+              placeholder="如:检索资源排期冲突,需顺延两周"
+              className="mt-1 w-full rounded-md border px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20"
+            />
+            {extMsg && (
+              <p className={cn('mt-2 text-xs', extMsg.startsWith('已') ? 'text-teal-700' : 'text-red-600')}>{extMsg}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setExtOpen(false)} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={!extDate || !extReason.trim()}
+                onClick={() => {
+                  const r = store.requestExtension(patent.id, extDate, extReason.trim())
+                  if (r === 'applied') { setExtOpen(false) }
+                  else if (r === 'pending') { setExtOpen(false) }
+                  else if (r === 'beyond-cycle') setExtMsg(`超出所属周期结束日(${cycle?.end})。跨周期项目请由 GL 在详情页标记。`)
+                  else setExtMsg('新截止日必须晚于当前截止日')
+                }}
+                className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+              >
+                提交申请
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 共同发明人编辑 */}
       {collabOpen && (

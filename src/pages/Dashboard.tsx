@@ -13,9 +13,34 @@ function daysUntil(d?: string) {
 }
 
 export default function Dashboard({ navigate }: { navigate: (p: Page) => void }) {
-  const { me, persona, visiblePatents, kpiRules, patents, transitions, userById } = useStore()
+  const { me, persona, visiblePatents, kpiRules, patents, transitions, userById, cycles, config, activeCycle, stageOverdueDays, closingRisk, reviewExtension } = useStore()
   const visible = visiblePatents()
   const active = visible.filter((p) => !p.archived) // 归档专利退出流水线视图
+  const cycle = activeCycle()
+
+  // 逾期/收口/延期审批(纯派生;PL 只管本组)
+  const pendingExts = active
+    .filter((p) => me.role === 'gl' || p.teamId === me.teamId)
+    .flatMap((p) => p.extensions.filter((e) => e.status === 'pending').map((e) => ({ p, e })))
+  const overdueRows = active
+    .map((p) => ({ p, days: stageOverdueDays(p) }))
+    .filter((r) => r.days > 0)
+    .sort((a, b) => b.days - a.days)
+  const buckets = [
+    overdueRows.filter((r) => r.days <= 7),
+    overdueRows.filter((r) => r.days >= 8 && r.days <= 14),
+    overdueRows.filter((r) => r.days >= 15),
+  ]
+  const riskRows = active.map((p) => ({ p, risk: closingRisk(p) })).filter((r) => r.risk)
+  const doomed = riskRows.filter((r) => r.risk === 'doomed')
+  const tightCount = riskRows.filter((r) => r.risk === 'tight').length
+  const cycleDaysLeft = cycle
+    ? Math.max(0, Math.floor((Date.parse(cycle.end) - Date.parse(new Date().toISOString().slice(0, 10))) / 86400000))
+    : null
+  const lastActivity = (pid: string) => {
+    const ts = transitions.filter((t) => t.patentId === pid)
+    return ts.length ? ts[ts.length - 1].at.slice(0, 10) : '—'
+  }
 
   // 待我审查:我是 reviewer 且尚未提交
   const myReviews = useMemo(
@@ -146,6 +171,126 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
         </section>
       )}
 
+      {/* GL/PL:逾期与收口 */}
+      {isManager && cycle && (
+        <section>
+          <SectionTitle
+            en="OVERDUE"
+            zh="逾期与收口"
+            right={
+              <span className="text-xs text-muted-foreground">
+                {cycle.name} 收口 {cycle.end} · 剩 {cycleDaysLeft} 天
+              </span>
+            }
+          />
+          <div className="space-y-4 rounded-lg border bg-card p-5">
+            {pendingExts.length > 0 && (
+              <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
+                <div className="text-xs font-medium text-amber-700">延期审批待办({pendingExts.length})</div>
+                {pendingExts.map(({ p, e }) => (
+                  <div key={e.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      className="font-medium hover:underline"
+                      onClick={() => navigate({ name: 'patent', id: p.id })}
+                    >
+                      {p.title}
+                    </button>
+                    <span className="text-muted-foreground">
+                      {stageLabel(e.stage)} {e.oldDue} → {e.newDue} · {userById(e.by).name} · {e.reason || '无说明'}
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded border border-teal-600 px-2 py-0.5 text-teal-700 hover:bg-teal-50"
+                      onClick={() => reviewExtension(p.id, e.id, true)}
+                    >
+                      批准
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-red-300 px-2 py-0.5 text-red-600 hover:bg-red-50"
+                      onClick={() => reviewExtension(p.id, e.id, false)}
+                    >
+                      驳回
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-3 gap-3">
+              {(['1–7 天', '8–14 天', '15 天以上'] as const).map((label, i) => (
+                <div key={label} className="rounded-md border p-3">
+                  <div className={`font-mono-x text-xl font-bold ${i === 0 ? 'text-amber-600' : i === 1 ? 'text-orange-600' : 'text-red-600'}`}>
+                    {buckets[i].length}
+                  </div>
+                  <div className="text-xs text-muted-foreground">逾期 {label}</div>
+                </div>
+              ))}
+            </div>
+
+            {overdueRows.length > 0 ? (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-1.5 pr-3 font-medium">专利</th>
+                    <th className="pr-3 font-medium">阶段</th>
+                    <th className="pr-3 font-medium">负责人</th>
+                    <th className="pr-3 font-medium">逾期</th>
+                    <th className="pr-3 font-medium">最后活动</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overdueRows.map(({ p, days }) => (
+                    <tr
+                      key={p.id}
+                      className="cursor-pointer border-b last:border-0 hover:bg-slate-50"
+                      onClick={() => navigate({ name: 'patent', id: p.id })}
+                    >
+                      <td className="max-w-52 truncate py-1.5 pr-3 font-medium">{p.title}</td>
+                      <td className="pr-3"><StagePill stage={p.stage} /></td>
+                      <td className="pr-3 text-xs text-muted-foreground">{userById(p.ownerId).name}</td>
+                      <td className="pr-3 font-medium text-red-600">{days} 天</td>
+                      <td className="pr-3 text-xs text-muted-foreground">{lastActivity(p.id)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="text-sm text-muted-foreground">当前没有逾期专利。</div>
+            )}
+
+            <div className="border-t pt-3">
+              <div className="mb-2 text-xs font-medium text-muted-foreground">
+                收口风险:从容 {riskRows.length - doomed.length - tightCount} · 紧张 {tightCount} · 注定逾期 {doomed.length}
+              </div>
+              {doomed.length > 0 && (
+                <div className="space-y-1.5">
+                  {doomed.map(({ p }) => (
+                    <div
+                      key={p.id}
+                      className="flex flex-wrap items-center gap-2 rounded border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs"
+                    >
+                      <button
+                        type="button"
+                        className="font-medium hover:underline"
+                        onClick={() => navigate({ name: 'patent', id: p.id })}
+                      >
+                        {p.title}
+                      </button>
+                      <span className="text-muted-foreground">
+                        {stageLabel(p.stage)} · 剩余流程预算超过周期剩余天数
+                      </span>
+                      <span className="font-medium text-red-600">注定逾期</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-5">
         {/* 待办 */}
         <section className="lg:col-span-3">
@@ -208,7 +353,8 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
           />
           <div className="space-y-3">
             {myKpiRules.map((r) => {
-              const report = computeKpi(r, patents, transitions)
+              const report = computeKpi(r, patents, transitions, cycles, config)
+              const rc = cycles.find((c) => c.id === r.cycleId)
               const pct = Math.round(report.overall * 100)
               return (
                 <button
@@ -227,7 +373,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                   <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
                     <span>{r.scope.type === 'global' ? '全员' : teamName(r.scope.teamId!)}</span>
                     <span>·</span>
-                    <span>自 {r.windowStart}</span>
+                    <span>{rc ? `${rc.name}${rc.status === 'closed' ? '(已收口冻结)' : ''}` : '未绑定周期'}</span>
                     <span>·</span>
                     <span>{r.targets.length} 个目标节点</span>
                     {r.scorerHook && (
@@ -259,6 +405,17 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                   className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-600"
                 >
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{p.title}</span>
+                  {stageOverdueDays(p) > 0 && (
+                    <span className="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600">
+                      逾期 {stageOverdueDays(p)} 天
+                    </span>
+                  )}
+                  {closingRisk(p) === 'doomed' && (
+                    <span className="shrink-0 rounded border border-red-300 px-1.5 py-0.5 text-[10px] text-red-600">收口告急</span>
+                  )}
+                  {closingRisk(p) === 'tight' && (
+                    <span className="shrink-0 rounded border border-amber-300 px-1.5 py-0.5 text-[10px] text-amber-600">收口紧张</span>
+                  )}
                   <VisibilityTag v={p.visibility} />
                   <StagePill stage={p.stage} />
                 </button>

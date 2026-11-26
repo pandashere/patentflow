@@ -1,11 +1,11 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import {
-  API_TOKENS, CONFIG, DEFAULT_PREFS, KPI_RULES, NOTIFICATIONS, PATENTS, TRANSITIONS, USERS, VERSIONS, teamById,
+  API_TOKENS, CONFIG, CYCLES, DEFAULT_PREFS, KPI_RULES, NOTIFICATIONS, PATENTS, TRANSITIONS, USERS, VERSIONS, teamById,
 } from './data'
 import {
   STAGES, stageIndex, stageLabel, type ApiToken, type KpiRule, type Notification, type NotifyEvent,
-  type Patent, type ReviewScore, type Role, type StageKey, type StageNotifyConfig, type StageTransition,
-  type StageVersion, type SystemConfig, type User, type UserPrefs,
+  type Cycle, type Patent, type ReviewScore, type Role, type StageExtension, type StageKey,
+  type StageNotifyConfig, type StageTransition, type StageVersion, type SystemConfig, type User, type UserPrefs,
 } from './types'
 
 // demo 可切换的四种身份(含"以 reviewer 身份被邀请"的视角)
@@ -38,6 +38,12 @@ interface Store {
   config: SystemConfig
   tokens: ApiToken[]
   prefs: UserPrefs
+  cycles: Cycle[]
+  snapshots: KpiSnapshot[]
+  activeCycle: () => Cycle | undefined
+  cycleOfPatent: (p: Patent) => Cycle | undefined
+  stageOverdueDays: (p: Patent) => number // 0 = 未逾期
+  closingRisk: (p: Patent) => 'comfortable' | 'tight' | 'doomed' | null
   loggedIn: boolean
   setLoggedIn: (v: boolean) => void
 
@@ -67,6 +73,12 @@ interface Store {
   updateMember: (id: string, patch: Partial<Pick<User, 'role' | 'teamId' | 'name' | 'email'>>) => void
   updateProfile: (patch: Partial<Pick<User, 'name' | 'email'>>) => void
   savePrefs: (patch: Partial<UserPrefs>) => void
+  saveCycle: (c: Cycle) => void
+  closeCycle: (id: string) => void
+  requestExtension: (patentId: string, newDue: string, reason: string) => 'applied' | 'pending' | 'invalid' | 'beyond-cycle'
+  reviewExtension: (patentId: string, extId: string, approve: boolean) => void
+  nudge: (patentId: string) => void
+  toggleCrossCycle: (patentId: string) => void
   createToken: (name: string, days: number) => string
   revokeToken: (id: string) => void
   adminRevokeToken: (id: string) => void
@@ -109,12 +121,43 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<SystemConfig>(CONFIG)
   const [tokens, setTokens] = useState<ApiToken[]>(API_TOKENS)
   const [prefsMap, setPrefsMap] = useState<Record<string, UserPrefs>>({})
+  const [cycles, setCycles] = useState<Cycle[]>(CYCLES)
+  const [snapshots, setSnapshots] = useState<KpiSnapshot[]>([])
   const [loggedIn, setLoggedIn] = useState(false)
 
   const persona = PERSONAS.find((p) => p.key === personaKey)!
   const me = users.find((u) => u.id === persona.userId)!
   const userById = (id: string) => users.find((u) => u.id === id) ?? users[0]
   const prefs = prefsMap[me.id] ?? DEFAULT_PREFS
+
+  // —— 周期与逾期(纯派生,不落库状态) ——
+  // 专利按创建日归入当时进行中的周期;多个进行时取最早创建的
+  const cycleOfPatent = (p: Patent) => {
+    const hit = cycles
+      .filter((c) => p.createdAt >= c.start && p.createdAt <= c.end)
+      .sort((a, b) => a.start.localeCompare(b.start))
+    return hit[0]
+  }
+  const activeCycle = () => cycles.find((c) => c.status === 'active')
+
+  const stageOverdueDays = (p: Patent) => {
+    if (p.archived) return 0
+    const due = p.dueDates[p.stage]
+    if (!due) return 0
+    return Math.max(0, Math.floor((Date.parse(today()) - Date.parse(due)) / 86400000))
+  }
+
+  // 收口风险:周期剩余天数 vs 当前及之后各阶段默认预算之和
+  const closingRisk = (p: Patent): 'comfortable' | 'tight' | 'doomed' | null => {
+    const c = cycleOfPatent(p)
+    if (!c || c.status !== 'active' || p.archived || p.crossCycle) return null
+    const remaining = Math.floor((Date.parse(c.end) - Date.parse(today())) / 86400000)
+    if (remaining < 0) return 'doomed'
+    const budget = STAGES.slice(stageIndex(p.stage)).reduce((a, s) => a + config.stageDefaults[s.key], 0)
+    if (remaining >= budget + 7) return 'comfortable'
+    if (remaining >= budget) return 'tight'
+    return 'doomed'
+  }
 
   const isReviewerOf = (p: Patent) =>
     p.stageData.patentability.reviewers.some((r) => r.userId === me.id)
@@ -163,6 +206,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     me, persona,
     setPersona: setPersonaKey,
     users, userById, tokens, prefs,
+    cycles, snapshots, activeCycle, cycleOfPatent, stageOverdueDays, closingRisk,
     patents, versions, transitions, kpiRules, notifications, config,
     loggedIn, setLoggedIn,
     visiblePatents: () => patents.filter(canSeePatent),
@@ -186,9 +230,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!next) return
       setPatents((ps) => ps.map((x) => {
         if (x.id !== patentId) return x
-        // 阶段默认周期(G2):推进时自动算出新阶段 due date(已有设定则不覆盖)
+        // 阶段默认周期(G2):推进时自动算出新阶段 due date(已有设定则不覆盖);
+        // 自定周期必须落在专利周期内:非跨周期项目按周期结束日截断
         const dueDates = { ...x.dueDates }
-        if (!dueDates[next.key]) dueDates[next.key] = addDays(today(), config.stageDefaults[next.key])
+        if (!dueDates[next.key]) {
+          let due = addDays(today(), config.stageDefaults[next.key])
+          const c = cycleOfPatent(x)
+          if (c && !x.crossCycle && due > c.end) due = c.end
+          dueDates[next.key] = due
+        }
         return { ...x, stage: next.key, dueDates }
       }))
       addTransition({ patentId, from: p.stage, to: next.key, reason, kind: 'advance' })
@@ -282,12 +332,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         title,
         ownerId: me.id,
         collaborators: [],
+        crossCycle: false,
+        extensions: [],
         teamId: me.teamId,
         visibility,
         stage: 'draft',
         createdAt: today(),
-        // 阶段默认周期(G2):草案截止日自动算出
-        dueDates: { draft: addDays(today(), config.stageDefaults.draft) },
+        // 阶段默认周期(G2):草案截止日自动算出,并按所属周期边界截断
+        dueDates: (() => {
+          let due = addDays(today(), config.stageDefaults.draft)
+          const c = cycles
+            .filter((cy) => today() >= cy.start && today() <= cy.end)
+            .sort((a, b) => a.start.localeCompare(b.start))[0]
+          if (c && due > c.end) due = c.end
+          return { draft: due }
+        })(),
         stageData: {
           draft: { background: '', classification: '', idea: '' },
           patentability: { summary: '', selfAssessment: emptyScore, reviewers: [] },
@@ -406,6 +465,103 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setTokens((ts) => ts.map((t) => (t.id === id ? { ...t, revoked: true } : t)))
     },
 
+    // —— 专利周期 ——
+    saveCycle: (c) =>
+      setCycles((cs) =>
+        cs.some((x) => x.id === c.id) ? cs.map((x) => (x.id === c.id ? c : x)) : [...cs, c],
+      ),
+
+    // 收口:周期关闭,绑定该周期的启用规则冻结为快照,之后不再变动
+    closeCycle: (id) => {
+      const c = cycles.find((x) => x.id === id)
+      if (!c || c.status !== 'active') return
+      const closed: Cycle = { ...c, status: 'closed', closedAt: now() }
+      setCycles((cs) => cs.map((x) => (x.id === id ? closed : x)))
+      setSnapshots((ss) => [
+        ...ss,
+        ...kpiRules
+          .filter((r) => r.cycleId === id && r.enabled)
+          .map((r) => {
+            const report = computeKpi(r, patents, transitions, cycles, config)
+            return {
+              id: `ks${++seq}`, cycleId: id, ruleId: r.id, frozenAt: now(),
+              overall: report.overall, items: report.items,
+            }
+          }),
+      ])
+      pushNotification({ event: 'transition', text: `专利周期「${c.name}」已收口,KPI 快照已冻结`, patentId: '' })
+    },
+
+    // —— 延期申请:≤阈值自动生效,>阈值挂起待 PL/GL 审批;不可超出所属周期(跨周期项目除外) ——
+    requestExtension: (patentId, newDue, reason) => {
+      const p = patents.find((x) => x.id === patentId)!
+      const oldDue = p.dueDates[p.stage]
+      if (!oldDue || newDue <= oldDue) return 'invalid'
+      const c = cycleOfPatent(p)
+      if (c && !p.crossCycle && newDue > c.end) return 'beyond-cycle'
+      const days = Math.round((Date.parse(newDue) - Date.parse(oldDue)) / 86400000)
+      const auto = days <= config.overdue.extensionApprovalThreshold
+      const ext: StageExtension = {
+        id: `ex${++seq}`, stage: p.stage, oldDue, newDue, reason,
+        by: me.id, at: now(), status: auto ? 'applied' : 'pending',
+      }
+      setPatents((ps) =>
+        ps.map((x) =>
+          x.id === patentId
+            ? {
+                ...x,
+                extensions: [...x.extensions, ext],
+                dueDates: auto ? { ...x.dueDates, [p.stage]: newDue } : x.dueDates,
+              }
+            : x,
+        ),
+      )
+      pushNotification({
+        event: 'due',
+        text: auto
+          ? `《${p.title}》${stageLabel(p.stage)}阶段延期 ${days} 天(自动生效)`
+          : `${me.name} 申请《${p.title}》${stageLabel(p.stage)}阶段延期 ${days} 天,待 PL/GL 批准`,
+        patentId,
+      })
+      return auto ? 'applied' : 'pending'
+    },
+
+    reviewExtension: (patentId, extId, approve) => {
+      const p = patents.find((x) => x.id === patentId)!
+      const ext = p.extensions.find((e) => e.id === extId)
+      if (!ext || ext.status !== 'pending') return
+      setPatents((ps) =>
+        ps.map((x) => {
+          if (x.id !== patentId) return x
+          return {
+            ...x,
+            extensions: x.extensions.map((e) =>
+              e.id === extId ? { ...e, status: approve ? ('applied' as const) : ('rejected' as const), approvedBy: me.id } : e,
+            ),
+            dueDates: approve ? { ...x.dueDates, [ext.stage]: ext.newDue } : x.dueDates,
+          }
+        }),
+      )
+      pushNotification({
+        event: 'due',
+        text: `《${p.title}》${stageLabel(ext.stage)}阶段延期申请已${approve ? '批准' : '驳回'}(${me.name})`,
+        patentId,
+      })
+    },
+
+    // 催办:手动提醒负责人(非自动升级)
+    nudge: (patentId) => {
+      const p = patents.find((x) => x.id === patentId)!
+      pushNotification({
+        event: 'due',
+        text: `${me.name} 催办:《${p.title}》${stageLabel(p.stage)}阶段已逾期 ${stageOverdueDays(p)} 天,请尽快处理`,
+        patentId,
+      })
+    },
+
+    toggleCrossCycle: (patentId) =>
+      setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, crossCycle: !x.crossCycle } : x))),
+
     setConfig,
     markAllRead: () => setNotifications((ns) => ns.map((n) => ({ ...n, read: true }))),
     pushNotification,
@@ -415,7 +571,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 }
 
 // —— KPI 计算 ——
-// 默认评分器:按达成的 target 比例给分(决策 6)。
+// 事件口径:统计「周期窗口内发生的阶段到达事件」,与专利创建时间无关 ——
+// 跨周期/结转专利无需特殊处理:进展落在哪个周期就计入哪个周期,各记各的、无双计。
+// 分母 = 周期内活跃专利(createdAt ≤ cycle.end 且未在 cycle.start 前归档;含归档,
+// 因为周期内的归档前进展仍是产出;跨周期标记专利按配置决定是否计入)。
 // rule.scorerHook 非空时,真实后端会改为调用用户注册的自由计算回调
 // (单项目 compute_item(patent, targets, transitions) / 整体 compute_kpi(items))。
 export interface KpiItemResult {
@@ -433,22 +592,44 @@ export interface KpiReport {
   overall: number
 }
 
-export function computeKpi(rule: KpiRule, patents: Patent[], transitions: StageTransition[]): KpiReport {
+export interface KpiSnapshot {
+  id: string
+  cycleId: string
+  ruleId: string
+  frozenAt: string
+  overall: number
+  items: KpiItemResult[]
+}
+
+export function computeKpi(
+  rule: KpiRule,
+  patents: Patent[],
+  transitions: StageTransition[],
+  cycles: Cycle[],
+  config: SystemConfig,
+): KpiReport {
+  const cycle = cycles.find((c) => c.id === rule.cycleId)
   const inScope = patents.filter((p) => {
-    if (p.archived) return false // 归档专利不进入 KPI 基准
+    if (!cycle) return false
+    if (p.createdAt > cycle.end) return false // 周期后才创建
+    if (p.archived?.kind === 'abandoned') return false // 放弃归档不拖累分母
+    if (p.archived && p.archived.at.slice(0, 10) < cycle.start) return false // 周期开始前已完成归档
+    if (p.crossCycle && !config.overdue.includeCrossCycleInKpi) return false
     if (rule.scope.type === 'team' && p.teamId !== rule.scope.teamId) return false
     return true
   })
   const items: KpiItemResult[] = inScope.map((p) => {
     const myTransitions = transitions.filter((t) => t.patentId === p.id)
     const achieved = rule.targets.map((t) => {
-      // "到达过"目标阶段(含之后回退的情况),以流转记录为准
-      const reached = myTransitions.some(
-        (tr) => stageIndex(tr.to) >= stageIndex(t.stage) && tr.at.slice(0, 10) <= t.deadline,
+      if (!cycle) return false
+      const deadline = t.deadline < cycle.end ? t.deadline : cycle.end
+      // 目标事件:周期窗口内「到达过」目标阶段(含之后回退的情况)
+      return myTransitions.some(
+        (tr) =>
+          stageIndex(tr.to) >= stageIndex(t.stage)
+          && tr.at.slice(0, 10) >= cycle.start
+          && tr.at.slice(0, 10) <= deadline,
       )
-      // 兜底:创建时已在该阶段之后的老专利
-      const bornAfter = stageIndex(p.stage) > stageIndex(t.stage) && p.createdAt <= t.deadline
-      return reached || bornAfter
     })
     const score = achieved.filter(Boolean).length / rule.targets.length
     return { patentId: p.id, title: p.title, ownerId: p.ownerId, currentStage: p.stage, achievedTargets: achieved, score }
