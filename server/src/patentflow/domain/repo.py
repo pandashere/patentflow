@@ -96,7 +96,7 @@ async def load_patents(conn: aiosqlite.Connection, ids: Iterable[str] | None = N
                  "reviewers": assigns.get((r["patent_id"], r["round"]), [])}
             )
 
-    async with conn.execute(f"SELECT * FROM extensions WHERE patent_id IN ({ph}) ORDER BY at, id", pids) as cur:
+    async with conn.execute(f"SELECT * FROM extensions WHERE patent_id IN ({ph}) ORDER BY at, rowid", pids) as cur:
         exts: dict[str, list] = defaultdict(list)
         for r in await cur.fetchall():
             e = {"id": r["id"], "stage": r["stage"], "oldDue": r["old_due"], "newDue": r["new_due"],
@@ -115,7 +115,7 @@ async def load_patents(conn: aiosqlite.Connection, ids: Iterable[str] | None = N
             **sd["patentability"],
             "round": r["review_round"],
             "reviewers": assigns.get((pid, r["review_round"]), []),
-            "pastRounds": rounds.get(pid, []),
+            "pastRounds": [x for x in rounds.get(pid, []) if x["round"] != r["review_round"]],
         }
         out.append({
             "id": pid, "code": r["code"], "title": r["title"], "ownerId": r["owner_id"],
@@ -146,12 +146,12 @@ def transition_json(r: aiosqlite.Row) -> dict[str, Any]:
 
 async def load_transitions(conn: aiosqlite.Connection, patent_ids: Iterable[str] | None = None) -> list[dict[str, Any]]:
     if patent_ids is None:
-        sql, params = "SELECT * FROM transitions ORDER BY at, id", ()
+        sql, params = "SELECT * FROM transitions ORDER BY at, rowid", ()
     else:
         ids = list(patent_ids)
         if not ids:
             return []
-        sql = f"SELECT * FROM transitions WHERE patent_id IN ({','.join('?' * len(ids))}) ORDER BY at, id"
+        sql = f"SELECT * FROM transitions WHERE patent_id IN ({','.join('?' * len(ids))}) ORDER BY at, rowid"
         params = tuple(ids)
     async with conn.execute(sql, params) as cur:
         return [transition_json(r) for r in await cur.fetchall()]
@@ -162,7 +162,7 @@ async def load_versions(conn: aiosqlite.Connection, patent_ids: Iterable[str]) -
     if not ids:
         return []
     async with conn.execute(
-        f"SELECT * FROM stage_data WHERE patent_id IN ({','.join('?' * len(ids))}) ORDER BY at, version", ids
+        f"SELECT * FROM stage_data WHERE patent_id IN ({','.join('?' * len(ids))}) ORDER BY at, rowid", ids
     ) as cur:
         return [
             {"version": r["version"], "patentId": r["patent_id"], "stage": r["stage"], "note": r["note"],
