@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
-import { USERS, userById, teamById } from '@/lib/data'
+import { teamById } from '@/lib/data'
 import {
   NOTIFY_EVENT_LABEL, STAGES, stageIndex, stageLabel,
   type NotifyEvent, type StageKey, type StageNotifyConfig, type Visibility,
@@ -12,14 +12,15 @@ import {
 import { DoiPane, DraftPane, MarkdownPane, PatentabilityPane } from './panes'
 import type { Page } from '@/components/AppShell'
 import {
-  Archive, ArchiveRestore, ArrowLeft, ArrowRight, Bell, GitCommitVertical, History, RotateCcw, X,
+  Archive, ArchiveRestore, ArrowLeft, ArrowRight, Bell, GitCommitVertical, History, RotateCcw,
+  UserRoundPlus, Users, X,
 } from 'lucide-react'
 
 const ALL_EVENTS: NotifyEvent[] = ['review', 'due', 'transition']
 
 export default function PatentDetail({ id, navigate }: { id: string; navigate: (p: Page) => void }) {
   const store = useStore()
-  const { patents, versions, transitions, canEditPatent, isReviewerOf, config } = store
+  const { patents, versions, transitions, canEditPatent, canOperatePatent, isReviewerOf, config, userById, users } = store
   const patent = patents.find((p) => p.id === id)
 
   const [viewStage, setViewStage] = useState<StageKey | null>(null)
@@ -29,6 +30,9 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
   const [archiveKind, setArchiveKind] = useState<'completed' | 'abandoned'>('completed')
   const [reason, setReason] = useState('')
   const [notifyOpen, setNotifyOpen] = useState(false)
+  const [collabOpen, setCollabOpen] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferTo, setTransferTo] = useState('')
 
   const myVersions = useMemo(
     () => versions.filter((v) => v.patentId === id).slice().reverse(),
@@ -52,6 +56,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
   }
 
   const editable = canEditPatent(patent) && !patent.archived
+  const operable = canOperatePatent(patent) && !patent.archived
   const curIdx = stageIndex(patent.stage)
   const shownStage = viewStage ?? patent.stage
   const shownIdx = stageIndex(shownStage)
@@ -65,7 +70,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
   const gateHint = privateLocked
     ? '私有专利只能停留在草案阶段,请先将可见性调整为团队/公开'
     : patent.stage === 'patentability' && !store.reviewGateOpen(patent)
-      ? `审查门禁未满足:需 ${config.reviewPassCount} 名 reviewer 通过`
+      ? `审查门禁未满足:需 ${config.reviewPassCount} 名 reviewer 通过,且加权均分 ≥ ${config.reviewMinWeighted}`
       : undefined
 
   return (
@@ -86,7 +91,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             <span>{patent.code}</span>
             <span>·</span>
             <span>创建于 {patent.createdAt}</span>
-            {editable ? (
+            {operable ? (
               <select
                 value={patent.visibility}
                 onChange={(e) => store.setVisibility(patent.id, e.target.value as Visibility)}
@@ -108,6 +113,15 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
           <h1 className="mt-1.5 text-xl font-bold tracking-tight">{patent.title}</h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
             <span>发明人 {userById(patent.ownerId).name}</span>
+            {patent.collaborators.length > 0 && (
+              <>
+                <span>·</span>
+                <span className="flex items-center gap-1">
+                  <Users className="size-3.5" />
+                  共同发明人 {patent.collaborators.map((c) => userById(c).name).join('、')}
+                </span>
+              </>
+            )}
             <span>·</span>
             <span>{teamById(patent.teamId).name}</span>
             <span>·</span>
@@ -125,8 +139,28 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             <Bell className="size-3.5" />
             通知设置
           </button>
+          {operable && (
+            <>
+              <button
+                type="button"
+                onClick={() => setCollabOpen(true)}
+                className="flex items-center gap-1.5 rounded-md border bg-white px-3 py-2 text-[13px] font-medium transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              >
+                <Users className="size-3.5" />
+                共同发明人
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTransferOpen(true); setTransferTo('') }}
+                className="flex items-center gap-1.5 rounded-md border bg-white px-3 py-2 text-[13px] font-medium transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              >
+                <UserRoundPlus className="size-3.5" />
+                变更负责人
+              </button>
+            </>
+          )}
           {patent.archived ? (
-            canEditPatent(patent) && (
+            canOperatePatent(patent) && (
               <button
                 type="button"
                 onClick={() => { setAction({ kind: 'unarchive' }); setReason('') }}
@@ -137,7 +171,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
               </button>
             )
           ) : (
-            editable && (
+            operable && (
               <>
                 <button
                   type="button"
@@ -398,13 +432,111 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
 
       {/* 通知设置 */}
       {notifyOpen && <NotifyDialog patentId={patent.id} onClose={() => setNotifyOpen(false)} />}
+
+      {/* 共同发明人编辑 */}
+      {collabOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setCollabOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold">共同发明人</h3>
+              <button type="button" onClick={() => setCollabOpen(false)} className="rounded p-1 hover:bg-slate-100" aria-label="关闭">
+                <X className="size-4" />
+              </button>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              共同发明人可查看并编辑各阶段内容(生成版本记录),但不能推进/回退/归档/变更可见性。
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {users.filter((u) => u.id !== patent.ownerId).map((u) => {
+                const on = patent.collaborators.includes(u.id)
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() =>
+                      store.setCollaborators(
+                        patent.id,
+                        on ? patent.collaborators.filter((c) => c !== u.id) : [...patent.collaborators, u.id],
+                      )
+                    }
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600',
+                      on ? 'border-[#12141f] bg-[#12141f] text-white' : 'text-slate-500 hover:bg-slate-50',
+                    )}
+                  >
+                    {u.name}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="mt-4 flex justify-end border-t pt-3">
+              <button type="button" onClick={() => setCollabOpen(false)} className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90">
+                完成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 变更负责人 */}
+      {transferOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setTransferOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold">变更负责人</h3>
+              <button type="button" onClick={() => setTransferOpen(false)} className="rounded p-1 hover:bg-slate-100" aria-label="关闭">
+                <X className="size-4" />
+              </button>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              适用于离职交接等场景。变更后原负责人自动转为共同发明人,保留访问与编辑权;历史版本与流转记录中的署名不变。
+            </p>
+            <select
+              value={transferTo}
+              onChange={(e) => setTransferTo(e.target.value)}
+              className="mt-3 w-full rounded-md border bg-white px-3 py-2.5 text-sm outline-none focus:border-teal-600"
+              aria-label="选择新负责人"
+            >
+              <option value="">选择新负责人(本组成员)…</option>
+              {users
+                .filter((u) => u.teamId === patent.teamId && u.id !== patent.ownerId)
+                .map((u) => (
+                  <option key={u.id} value={u.id}>{u.name} · {u.title}</option>
+                ))}
+            </select>
+            <div className="mt-4 flex justify-end gap-2 border-t pt-3">
+              <button type="button" onClick={() => setTransferOpen(false)} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={!transferTo}
+                onClick={() => { store.transferOwnership(patent.id, transferTo); setTransferOpen(false) }}
+                className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+              >
+                确认变更
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // —— 每阶段通知人配置 ——
 function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => void }) {
-  const { patents, saveNotifyConfig } = useStore()
+  const { patents, saveNotifyConfig, users } = useStore()
   const patent = patents.find((p) => p.id === patentId)!
 
   const [cfgs, setCfgs] = useState<StageNotifyConfig[]>(() =>
@@ -483,7 +615,7 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
                   本组 PL
                 </ToggleTag>
                 <span className="mx-1 h-4 w-px bg-border" />
-                {USERS.map((u) => (
+                {users.map((u) => (
                   <ToggleTag
                     key={u.id}
                     on={c.userIds.includes(u.id)}

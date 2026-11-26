@@ -4,13 +4,12 @@ import { useStore, teamName } from '@/lib/store'
 import { STAGES, type StageKey, type Visibility } from '@/lib/types'
 import { DueChip, SectionTitle, StagePill, VisibilityTag, ArchivedBadge } from '@/components/pf'
 import type { Page } from '@/components/AppShell'
-import { userById } from '@/lib/data'
 import { Plus, Search } from 'lucide-react'
 
 type Scope = 'mine' | 'team' | 'all' | 'archived'
 
 export default function PatentList({ navigate }: { navigate: (p: Page) => void }) {
-  const { me, visiblePatents, createPatent } = useStore()
+  const { me, visiblePatents, createPatent, userById, prefs } = useStore()
   const [scope, setScope] = useState<Scope>(me.role === 'user' ? 'mine' : 'all')
   const [stage, setStage] = useState<StageKey | ''>('')
   const [vis, setVis] = useState<Visibility | ''>('')
@@ -28,7 +27,7 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
           if (!p.archived) return false
         } else {
           if (p.archived) return false // 归档专利只在「已归档」页签出现
-          if (scope === 'mine' && p.ownerId !== me.id) return false
+          if (scope === 'mine' && p.ownerId !== me.id && !p.collaborators.includes(me.id)) return false
           if (scope === 'team' && p.teamId !== me.teamId) return false
         }
         if (stage && p.stage !== stage) return false
@@ -54,7 +53,7 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
         right={
           <button
             type="button"
-            onClick={() => { setCreating(true); setNewTitle(''); setNewVis('private') }}
+            onClick={() => { setCreating(true); setNewTitle(''); setNewVis(prefs.defaultVisibility) }}
             className="flex items-center gap-1.5 rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
           >
             <Plus className="size-4" />

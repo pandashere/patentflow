@@ -7,10 +7,12 @@ import PatentList from '@/pages/PatentList'
 import PatentDetail from '@/pages/PatentDetail'
 import Kpi from '@/pages/Kpi'
 import Admin from '@/pages/Admin'
+import Profile from '@/pages/Profile'
 
 function Shell() {
-  const { loggedIn } = useStore()
-  const [page, setPage] = useState<Page>({ name: 'dashboard' })
+  const { loggedIn, prefs } = useStore()
+  // 个人偏好(U6):默认着陆页
+  const [page, setPage] = useState<Page>(() => ({ name: prefs.homePage }) as Page)
 
   if (!loggedIn) return <Login />
 
@@ -21,6 +23,7 @@ function Shell() {
       {page.name === 'patent' && <PatentDetail id={page.id} navigate={setPage} />}
       {page.name === 'kpi' && <Kpi />}
       {page.name === 'admin' && <Admin />}
+      {page.name === 'profile' && <Profile />}
     </AppShell>
   )
 }

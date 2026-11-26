@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { computeKpi, teamName, useStore } from '@/lib/store'
-import { TEAMS, userById } from '@/lib/data'
+import { TEAMS } from '@/lib/data'
 import { STAGES, stageLabel, type KpiRule, type StageKey } from '@/lib/types'
 import { SectionTitle, StagePill } from '@/components/pf'
-import { Check, Code2, Pencil, Plus, X } from 'lucide-react'
+import { Check, Code2, Pause, Pencil, Play, Plus, X } from 'lucide-react'
 
 export default function Kpi() {
-  const { me, kpiRules, patents, transitions, saveKpiRule } = useStore()
+  const { me, kpiRules, patents, transitions, saveKpiRule, toggleKpiRule, userById } = useStore()
   const canManage = me.role === 'gl' || me.role === 'pl'
   const [editing, setEditing] = useState<KpiRule | null>(null)
   const [openReport, setOpenReport] = useState<string | null>(null)
@@ -35,6 +35,8 @@ export default function Kpi() {
                   windowStart: '2026-07-01',
                   targets: [{ stage: 'patentability', deadline: '2026-12-31' }],
                   scorerHook: null,
+                  enabled: true,
+                  updatedAt: '',
                   createdBy: me.id,
                 })
               }
@@ -53,11 +55,14 @@ export default function Kpi() {
           const pct = Math.round(report.overall * 100)
           const open = openReport === r.id
           return (
-            <div key={r.id} className="rounded-lg border bg-card">
+            <div key={r.id} className={cn('rounded-lg border bg-card', !r.enabled && 'opacity-70')}>
               <div className="flex flex-wrap items-center gap-4 px-5 py-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-semibold">{r.name}</span>
+                    {!r.enabled && (
+                      <span className="rounded bg-slate-200 px-1.5 py-px text-[10px] font-medium text-slate-500">已停用</span>
+                    )}
                     {r.scorerHook && (
                       <span className="flex items-center gap-1 rounded bg-violet-50 px-1.5 py-px font-mono-x text-[10px] text-violet-700">
                         <Code2 className="size-3" />
@@ -71,22 +76,34 @@ export default function Kpi() {
                     <span>
                       目标:{r.targets.map((t) => `${stageLabel(t.stage)} @ ${t.deadline}`).join(' + ')}
                     </span>
+                    {r.updatedAt && <span>更新于 {r.updatedAt}</span>}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-mono-x text-2xl font-bold text-teal-700">{pct}%</div>
+                  <div className={cn('font-mono-x text-2xl font-bold', r.enabled ? 'text-teal-700' : 'text-slate-400')}>{pct}%</div>
                   <div className="text-[10px] text-muted-foreground">平均达成率</div>
                 </div>
                 <div className="flex gap-2">
                   {canManage && (
-                    <button
-                      type="button"
-                      onClick={() => setEditing({ ...r })}
-                      className="flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
-                    >
-                      <Pencil className="size-3" />
-                      编辑
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => toggleKpiRule(r.id)}
+                        title={r.enabled ? '停用后不参与仪表盘统计,历史数据保留' : '重新启用'}
+                        className="flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                      >
+                        {r.enabled ? <Pause className="size-3" /> : <Play className="size-3" />}
+                        {r.enabled ? '停用' : '启用'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditing({ ...r })}
+                        className="flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                      >
+                        <Pencil className="size-3" />
+                        编辑
+                      </button>
+                    </>
                   )}
                   <button
                     type="button"

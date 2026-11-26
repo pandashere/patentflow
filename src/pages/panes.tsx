@@ -2,8 +2,7 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/lib/store'
-import { USERS, userById } from '@/lib/data'
+import { useStore, weightedScore } from '@/lib/store'
 import type {
   DoiData, DraftData, MarkdownStageData, Patent, ReviewScore, StageKey,
 } from '@/lib/types'
@@ -49,7 +48,7 @@ const fieldCls =
 
 // —— 阶段 1:草案(background / class / idea) ——
 export function DraftPane({ patent, editable }: PaneProps) {
-  const { saveStageData } = useStore()
+  const { saveStageData, config } = useStore()
   const d = patent.stageData.draft
   const [form, setForm] = useState<DraftData>({ ...d })
 
@@ -67,14 +66,19 @@ export function DraftPane({ patent, editable }: PaneProps) {
           />
         </div>
         <div>
-          <label className="ui-label text-slate-500" htmlFor="f-cls">分类 · CLASS(自由文本)</label>
+          <label className="ui-label text-slate-500" htmlFor="f-cls">分类 · CLASS(自由文本,带词表联想)</label>
           <input
             id="f-cls" disabled={!editable}
             value={form.classification}
             onChange={(e) => setForm({ ...form, classification: e.target.value })}
             className={fieldCls}
             placeholder="技术领域关键词 / IPC 分类号,自由填写"
+            list="class-suggestions"
           />
+          {/* GL 在租户管理维护的建议词表;仅联想,不限制输入 */}
+          <datalist id="class-suggestions">
+            {config.classSuggestions.map((s) => <option key={s} value={s} />)}
+          </datalist>
         </div>
         <div>
           <label className="ui-label text-slate-500" htmlFor="f-idea">核心构思 · IDEA</label>
@@ -94,8 +98,10 @@ export function DraftPane({ patent, editable }: PaneProps) {
 
 // —— 阶段 2:可专利性审查(三维度 + reviewer 门禁) ——
 export function PatentabilityPane({ patent, editable }: PaneProps) {
-  const { me, config, inviteReviewer, submitReview, saveStageData, reviewPassCount, isReviewerOf } = useStore()
+  const { me, config, users, userById, inviteReviewer, submitReview, saveStageData, reviewPassCount, isReviewerOf } = useStore()
   const d = patent.stageData.patentability
+  const dimLabels = config.reviewDims.map((x) => x.label)
+  const dimKeys = config.reviewDims.map((x) => x.key)
   const [summary, setSummary] = useState(d.summary)
   const [inviteId, setInviteId] = useState('')
   const [self, setSelf] = useState(d.selfAssessment)
@@ -109,8 +115,9 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
   const [score, setScore] = useState<ReviewScore>({
     difficulty: 3, nonObviousness: 3, novelty: 3, comment: '', verdict: 'pass',
   })
+  const [blockMsg, setBlockMsg] = useState('')
 
-  const candidates = USERS.filter(
+  const candidates = users.filter(
     (u) => u.id !== patent.ownerId && !d.reviewers.some((r) => r.userId === u.id),
   )
 
@@ -143,10 +150,10 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
             <RadarChart values={[self.difficulty, self.nonObviousness, self.novelty]} size={150} color="#64748b" />
             <div className="flex-1 space-y-2">
               {editable ? (
-                (['difficulty', 'nonObviousness', 'novelty'] as const).map((k, i) => (
+                dimKeys.map((k, i) => (
                   <label key={k} className="block">
                     <span className="flex justify-between text-xs text-slate-600">
-                      <span>{['技术难度', '非显而易见性', '创新性'][i]}</span>
+                      <span>{dimLabels[i]}</span>
                       <span className="font-mono-x font-bold">{self[k]}</span>
                     </span>
                     <input
@@ -180,8 +187,8 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
           </span>
           <span className="ml-2 text-slate-600">
             {gateOpen
-              ? '已满足 GL 设定的通过人数,可推进至实施阶段。'
-              : `GL 设定至少 ${config.reviewPassCount} 名 reviewer 通过方可进入实施。任一打回将自动退回草案。`}
+              ? '已满足门禁条件,可推进至实施阶段。'
+              : `GL 设定:至少 ${config.reviewPassCount} 名 reviewer 通过,且「通过」的加权均分 ≥ ${config.reviewMinWeighted}。任一打回将自动退回草案。`}
           </span>
         </div>
       </div>
@@ -236,12 +243,25 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
                     <span className="text-sm font-semibold">{u.name}</span>
                     <span className="text-xs text-muted-foreground">{u.title}</span>
                     {r.score ? (
-                      <span className={cn(
-                        'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                        r.score.verdict === 'pass' ? 'bg-teal-100 text-teal-800' : 'bg-red-100 text-red-700',
-                      )}>
-                        {r.score.verdict === 'pass' ? '通过' : '打回'}
-                      </span>
+                      <>
+                        <span className={cn(
+                          'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                          r.score.verdict === 'pass' ? 'bg-teal-100 text-teal-800' : 'bg-red-100 text-red-700',
+                        )}>
+                          {r.score.verdict === 'pass' ? '通过' : '打回'}
+                        </span>
+                        <span
+                          className={cn(
+                            'rounded-full px-2 py-0.5 font-mono-x text-[11px]',
+                            weightedScore(r.score, config) >= config.reviewMinWeighted
+                              ? 'bg-slate-100 text-slate-600'
+                              : 'bg-red-50 text-red-600',
+                          )}
+                          title={`加权均分(门禁下限 ${config.reviewMinWeighted})`}
+                        >
+                          加权 {weightedScore(r.score, config).toFixed(1)}
+                        </span>
+                      </>
                     ) : (
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">待审查</span>
                     )}
@@ -271,10 +291,10 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
         <div className="rounded-lg border-2 border-teal-600/60 bg-teal-50/40 p-5">
           <div className="ui-label text-teal-700">YOUR REVIEW · 请完成三维度审查</div>
           <div className="mt-3 grid gap-4 sm:grid-cols-3">
-            {(['difficulty', 'nonObviousness', 'novelty'] as const).map((k, i) => (
+            {dimKeys.map((k, i) => (
               <label key={k} className="block rounded-md border bg-white p-3">
                 <span className="flex justify-between text-xs font-medium">
-                  <span>{['技术难度', '非显而易见性', '创新性'][i]}</span>
+                  <span>{dimLabels[i]}</span>
                   <span className="font-mono-x text-sm font-bold text-teal-700">{score[k]}</span>
                 </span>
                 <input
@@ -292,10 +312,20 @@ export function PatentabilityPane({ patent, editable }: PaneProps) {
             placeholder="审查意见(打回时必填,将作为回退原因记录)"
             className={cn(fieldCls, 'mt-3')}
           />
+          <div className="mt-2 text-xs text-slate-500">
+            当前加权均分:<span className="font-mono-x font-bold text-teal-700">{weightedScore(score, config).toFixed(1)}</span>
+            <span className="text-slate-400">(GL 门禁下限 {config.reviewMinWeighted},低于下限的「通过」将被拦截)</span>
+          </div>
+          {blockMsg && <p className="mt-2 text-xs font-medium text-red-600">{blockMsg}</p>}
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              onClick={() => submitReview(patent.id, { ...score, verdict: 'pass' })}
+              onClick={() => {
+                const r = submitReview(patent.id, { ...score, verdict: 'pass' })
+                setBlockMsg(r === 'below-min'
+                  ? `加权均分低于 GL 设定的下限 ${config.reviewMinWeighted},「通过」未生效 —— 请提高评分或改判打回`
+                  : '')
+              }}
               className="flex items-center gap-1.5 rounded-md bg-teal-700 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
             >
               <Send className="size-4" />

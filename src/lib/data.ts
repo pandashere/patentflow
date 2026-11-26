@@ -27,20 +27,51 @@ export const teamById = (id: string) => TEAMS.find((t) => t.id === id)!
 
 export const CONFIG: SystemConfig = {
   reviewPassCount: 2,
+  reviewMinWeighted: 3.0,
+  reviewDims: [
+    { key: 'difficulty', label: '技术难度', weight: 1 },
+    { key: 'nonObviousness', label: '非显而易见性', weight: 1 },
+    { key: 'novelty', label: '创新性', weight: 1 },
+  ],
+  stageDefaults: { draft: 14, patentability: 7, implementation: 30, search: 21, doi: 30 },
+  classSuggestions: [
+    '医疗影像', '联邦学习', '物联网', '边缘计算', '工业互联网',
+    '图神经网络', 'NLP', '数据安全', 'AGV 调度', '散热结构', 'SaaS 权限',
+  ],
+  numberPrefix: 'PF',
   webhookUrl: 'https://im-bot.corp.local/hook/patentflow',
   ssoProviders: [
     { name: '企业统一认证 (OIDC)', issuer: 'corp-oidc', enabled: true },
     { name: 'LDAP 域账号', issuer: 'ldap', enabled: true },
     { name: '本地账密', issuer: 'local', enabled: true },
   ],
+  notifyDefaults: {
+    review: { owner: true, pl: true, gl: false },
+    due: { owner: true, pl: true, gl: false },
+    transition: { owner: true, pl: true, gl: true },
+  },
 }
+
+// —— 个人偏好默认值(用户可在个人中心修改) ——
+export const DEFAULT_PREFS: import('./types').UserPrefs = {
+  notifyEvents: { review: true, due: true, transition: true },
+  dueReminderDays: [3, 1, 0],
+  quietHours: '22:00-08:00',
+  defaultVisibility: 'private',
+  homePage: 'dashboard',
+}
+
+// —— 个人 API Token(示例) ——
+export const API_TOKENS: import('./types').ApiToken[] = [
+  { id: 'tk1', userId: 'u-chenxi', name: '本地脚本只读', token: 'pfk_9f2c7a31e8d44b0f', createdAt: '2026-10-12 10:00', expiresAt: '2027-10-01', revoked: false },
+]
 
 const emptyScore = { difficulty: 0, nonObviousness: 0, novelty: 0, comment: '', verdict: 'pending' as const }
 
 export const PATENTS: Patent[] = [
   {
     id: 'p1', code: 'PF-2026-011', title: '基于差分隐私的跨中心医疗影像分割方法',
-    ownerId: 'u-chenxi', teamId: 't1', visibility: 'team', stage: 'patentability',
+    ownerId: 'u-chenxi', collaborators: ['u-wangfang'], teamId: 't1', visibility: 'team', stage: 'patentability',
     archived: null,
     createdAt: '2026-09-14',
     dueDates: { draft: '2026-09-30', patentability: '2026-12-05', implementation: '2027-01-31' },
@@ -66,7 +97,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p2', code: 'PF-2026-009', title: '低功耗蓝牙 Mesh 网络的自适应中继选择方法',
-    ownerId: 'u-chenxi', teamId: 't1', visibility: 'public', stage: 'implementation',
+    ownerId: 'u-chenxi', collaborators: [], teamId: 't1', visibility: 'public', stage: 'implementation',
     archived: null,
     createdAt: '2026-08-02',
     dueDates: { implementation: '2026-12-10', search: '2027-02-28' },
@@ -94,7 +125,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p3', code: 'PF-2026-014', title: '面向边缘网关的容器化协议转换热更新机制',
-    ownerId: 'u-chenxi', teamId: 't1', visibility: 'private', stage: 'draft',
+    ownerId: 'u-chenxi', collaborators: [], teamId: 't1', visibility: 'private', stage: 'draft',
     archived: null,
     createdAt: '2026-11-18',
     dueDates: { draft: '2026-12-20' },
@@ -113,7 +144,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p4', code: 'PF-2026-007', title: '基于时序图神经网络的产线设备异常预警方法',
-    ownerId: 'u-qinyue', teamId: 't2', visibility: 'team', stage: 'search',
+    ownerId: 'u-qinyue', collaborators: [], teamId: 't2', visibility: 'team', stage: 'search',
     archived: null,
     createdAt: '2026-06-11',
     dueDates: { search: '2026-12-15', doi: '2027-03-01' },
@@ -141,7 +172,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p5', code: 'PF-2026-005', title: '多租户 SaaS 环境下的细粒度数据权限缓存方法',
-    ownerId: 'u-wangfang', teamId: 't1', visibility: 'team', stage: 'doi',
+    ownerId: 'u-wangfang', collaborators: ['u-chenxi'], teamId: 't1', visibility: 'team', stage: 'doi',
     archived: null,
     createdAt: '2026-03-05',
     dueDates: { doi: '2026-12-31' },
@@ -168,7 +199,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p6', code: 'PF-2026-012', title: '用于 AGV 调度的动态死锁检测与解除方法',
-    ownerId: 'u-duanmu', teamId: 't3', visibility: 'public', stage: 'patentability',
+    ownerId: 'u-duanmu', collaborators: [], teamId: 't3', visibility: 'public', stage: 'patentability',
     archived: null,
     createdAt: '2026-10-09',
     dueDates: { patentability: '2026-11-30' },
@@ -190,7 +221,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p7', code: 'PF-2026-016', title: '基于语义切分的研发文档自动脱敏方法',
-    ownerId: 'u-shaoqi', teamId: 't2', visibility: 'team', stage: 'draft',
+    ownerId: 'u-shaoqi', collaborators: [], teamId: 't2', visibility: 'team', stage: 'draft',
     archived: null,
     createdAt: '2026-11-20',
     dueDates: { draft: '2026-12-28' },
@@ -205,7 +236,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p8', code: 'PF-2026-003', title: '高密度服务器机柜的相变材料均温结构',
-    ownerId: 'u-duanmu', teamId: 't3', visibility: 'public', stage: 'doi',
+    ownerId: 'u-duanmu', collaborators: [], teamId: 't3', visibility: 'public', stage: 'doi',
     archived: null,
     createdAt: '2026-01-16',
     dueDates: { doi: '2026-12-08' },
@@ -227,7 +258,7 @@ export const PATENTS: Patent[] = [
   },
   {
     id: 'p9', code: 'PF-2025-021', title: '基于二维码动态刷新的会议签到防代签方法',
-    ownerId: 'u-wangfang', teamId: 't1', visibility: 'team', stage: 'search',
+    ownerId: 'u-wangfang', collaborators: [], teamId: 't1', visibility: 'team', stage: 'search',
     archived: { kind: 'abandoned', at: '2026-05-20 16:10', by: 'u-wangfang', reason: '检索发现 CN113xxxxxxA 已覆盖核心方案,新颖性不成立,终止' },
     createdAt: '2025-12-08',
     dueDates: {},
@@ -278,13 +309,13 @@ export const KPI_RULES: KpiRule[] = [
       { stage: 'patentability', deadline: '2026-10-31' },
       { stage: 'implementation', deadline: '2026-12-31' },
     ],
-    scorerHook: null, createdBy: 'u-linzf',
+    scorerHook: null, enabled: true, createdBy: 'u-linzf', updatedAt: '2026-07-02 10:00',
   },
   {
     id: 'k2', name: '2026 全年 · 全员 DOI 产出',
     scope: { type: 'global' }, windowStart: '2026-01-01',
     targets: [{ stage: 'doi', deadline: '2026-12-31' }],
-    scorerHook: 'custom_scorer.py:weighted_score', createdBy: 'u-guyq',
+    scorerHook: 'custom_scorer.py:weighted_score', enabled: true, createdBy: 'u-guyq', updatedAt: '2026-01-05 09:30',
   },
 ]
 

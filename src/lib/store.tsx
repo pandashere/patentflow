@@ -1,11 +1,11 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import {
-  CONFIG, KPI_RULES, NOTIFICATIONS, PATENTS, TRANSITIONS, USERS, VERSIONS, teamById,
+  API_TOKENS, CONFIG, DEFAULT_PREFS, KPI_RULES, NOTIFICATIONS, PATENTS, TRANSITIONS, USERS, VERSIONS, teamById,
 } from './data'
 import {
-  STAGES, stageIndex, stageLabel, type KpiRule, type Notification, type NotifyEvent, type Patent,
-  type ReviewScore, type StageKey, type StageNotifyConfig, type StageTransition,
-  type StageVersion, type SystemConfig, type User,
+  STAGES, stageIndex, stageLabel, type ApiToken, type KpiRule, type Notification, type NotifyEvent,
+  type Patent, type ReviewScore, type Role, type StageKey, type StageNotifyConfig, type StageTransition,
+  type StageVersion, type SystemConfig, type User, type UserPrefs,
 } from './types'
 
 // demo 可切换的四种身份(含"以 reviewer 身份被邀请"的视角)
@@ -28,17 +28,22 @@ interface Store {
   me: User
   persona: Persona
   setPersona: (key: string) => void
+  users: User[]
+  userById: (id: string) => User
   patents: Patent[]
   versions: StageVersion[]
   transitions: StageTransition[]
   kpiRules: KpiRule[]
   notifications: Notification[]
   config: SystemConfig
+  tokens: ApiToken[]
+  prefs: UserPrefs
   loggedIn: boolean
   setLoggedIn: (v: boolean) => void
 
   visiblePatents: () => Patent[]
-  canEditPatent: (p: Patent) => boolean
+  canEditPatent: (p: Patent) => boolean // 含共同发明人:可编辑阶段内容
+  canOperatePatent: (p: Patent) => boolean // 推进/回退/归档/转让:负责人/本组 PL/GL
   isReviewerOf: (p: Patent) => boolean
   reviewPassCount: (p: Patent) => number
   reviewGateOpen: (p: Patent) => boolean
@@ -47,14 +52,24 @@ interface Store {
   advance: (patentId: string, reason: string) => void
   rollback: (patentId: string, to: StageKey, reason: string) => void
   inviteReviewer: (patentId: string, userId: string) => void
-  submitReview: (patentId: string, score: ReviewScore) => void
+  submitReview: (patentId: string, score: ReviewScore) => 'ok' | 'below-min'
   saveNotifyConfig: (patentId: string, cfgs: StageNotifyConfig[]) => void
   createPatent: (title: string, visibility: Patent['visibility']) => string
   setVisibility: (patentId: string, v: Patent['visibility']) => void
   archive: (patentId: string, kind: 'completed' | 'abandoned', reason: string) => void
   unarchive: (patentId: string, reason: string) => void
+  transferOwnership: (patentId: string, newOwnerId: string) => void
+  setCollaborators: (patentId: string, ids: string[]) => void
   saveKpiRule: (rule: KpiRule) => void
+  toggleKpiRule: (id: string) => void
   setConfig: (c: SystemConfig) => void
+  addMember: (m: { name: string; email: string; title: string; teamId: string; role: Role }) => void
+  updateMember: (id: string, patch: Partial<Pick<User, 'role' | 'teamId' | 'name' | 'email'>>) => void
+  updateProfile: (patch: Partial<Pick<User, 'name' | 'email'>>) => void
+  savePrefs: (patch: Partial<UserPrefs>) => void
+  createToken: (name: string, days: number) => string
+  revokeToken: (id: string) => void
+  adminRevokeToken: (id: string) => void
   markAllRead: () => void
   pushNotification: (n: Omit<Notification, 'id' | 'at' | 'read'>) => void
 }
@@ -68,26 +83,45 @@ export function useStore() {
 }
 
 const now = () => new Date().toISOString().slice(0, 16).replace('T', ' ')
+const today = () => new Date().toISOString().slice(0, 10)
+const addDays = (from: string, days: number) => {
+  const d = new Date(`${from}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  // 本地时区格式化,避免 toISOString 的 UTC 偏移导致日期差一天
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 let seq = 100
+
+// —— 加权均分:GL 配置的维度权重;「通过」低于加权下限则不计入门禁 ——
+export function weightedScore(s: Pick<ReviewScore, 'difficulty' | 'nonObviousness' | 'novelty'>, config: SystemConfig) {
+  const totalW = config.reviewDims.reduce((a, d) => a + d.weight, 0) || 1
+  return config.reviewDims.reduce((a, d) => a + s[d.key] * d.weight, 0) / totalW
+}
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [personaKey, setPersonaKey] = useState('user')
+  const [users, setUsers] = useState<User[]>(USERS)
   const [patents, setPatents] = useState<Patent[]>(PATENTS)
   const [versions, setVersions] = useState<StageVersion[]>(VERSIONS)
   const [transitions, setTransitions] = useState<StageTransition[]>(TRANSITIONS)
   const [kpiRules, setKpiRules] = useState<KpiRule[]>(KPI_RULES)
   const [notifications, setNotifications] = useState<Notification[]>(NOTIFICATIONS)
   const [config, setConfig] = useState<SystemConfig>(CONFIG)
+  const [tokens, setTokens] = useState<ApiToken[]>(API_TOKENS)
+  const [prefsMap, setPrefsMap] = useState<Record<string, UserPrefs>>({})
   const [loggedIn, setLoggedIn] = useState(false)
 
   const persona = PERSONAS.find((p) => p.key === personaKey)!
-  const me = USERS.find((u) => u.id === persona.userId)!
+  const me = users.find((u) => u.id === persona.userId)!
+  const userById = (id: string) => users.find((u) => u.id === id) ?? users[0]
+  const prefs = prefsMap[me.id] ?? DEFAULT_PREFS
 
   const isReviewerOf = (p: Patent) =>
     p.stageData.patentability.reviewers.some((r) => r.userId === me.id)
 
   const canSeePatent = (p: Patent) => {
     if (p.ownerId === me.id) return true
+    if (p.collaborators.includes(me.id)) return true // 共同发明人可见
     if (isReviewerOf(p)) return true // reviewer 例外通道
     if (p.visibility === 'public') return true
     if (p.visibility === 'team') {
@@ -99,12 +133,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   const canEditPatent = (p: Patent) =>
+    p.ownerId === me.id || p.collaborators.includes(me.id)
+    || (me.role === 'pl' && me.teamId === p.teamId) || me.role === 'gl'
+
+  const canOperatePatent = (p: Patent) =>
     p.ownerId === me.id || (me.role === 'pl' && me.teamId === p.teamId) || me.role === 'gl'
 
-  const reviewPassCount = (p: Patent) =>
-    p.stageData.patentability.reviewers.filter((r) => r.score?.verdict === 'pass').length
+  // 「通过」需同时满足加权均分下限(G1)
+  const qualifiedPass = (s: ReviewScore | null) =>
+    s?.verdict === 'pass' && weightedScore(s, config) >= config.reviewMinWeighted
 
-  // 决策:GL 配置至少 n 名 reviewer 通过,且无未结打回
+  const reviewPassCount = (p: Patent) =>
+    p.stageData.patentability.reviewers.filter((r) => qualifiedPass(r.score)).length
+
+  // 决策:GL 配置至少 n 名 reviewer 通过(加权达标),且无未结打回
   const reviewGateOpen = (p: Patent) =>
     reviewPassCount(p) >= config.reviewPassCount
 
@@ -120,10 +162,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const store: Store = {
     me, persona,
     setPersona: setPersonaKey,
+    users, userById, tokens, prefs,
     patents, versions, transitions, kpiRules, notifications, config,
     loggedIn, setLoggedIn,
     visiblePatents: () => patents.filter(canSeePatent),
-    canEditPatent, isReviewerOf, reviewPassCount, reviewGateOpen,
+    canEditPatent, canOperatePatent, isReviewerOf, reviewPassCount, reviewGateOpen,
 
     saveStageData: (patentId, stage, data, note) => {
       setPatents((ps) =>
@@ -141,7 +184,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const p = patents.find((x) => x.id === patentId)!
       const next = STAGES[stageIndex(p.stage) + 1]
       if (!next) return
-      setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, stage: next.key } : x)))
+      setPatents((ps) => ps.map((x) => {
+        if (x.id !== patentId) return x
+        // 阶段默认周期(G2):推进时自动算出新阶段 due date(已有设定则不覆盖)
+        const dueDates = { ...x.dueDates }
+        if (!dueDates[next.key]) dueDates[next.key] = addDays(today(), config.stageDefaults[next.key])
+        return { ...x, stage: next.key, dueDates }
+      }))
       addTransition({ patentId, from: p.stage, to: next.key, reason, kind: 'advance' })
       pushNotification({ event: 'transition', text: `《${p.title}》已推进至「${next.label}」`, patentId })
     },
@@ -159,7 +208,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     inviteReviewer: (patentId, userId) => {
       const p = patents.find((x) => x.id === patentId)!
-      const u = USERS.find((x) => x.id === userId)!
+      const u = users.find((x) => x.id === userId)!
       setPatents((ps) =>
         ps.map((x) => {
           if (x.id !== patentId) return x
@@ -180,6 +229,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     submitReview: (patentId, score) => {
+      // 加权均分低于 GL 设定下限时,「通过」不计入门禁 → 直接拦截并提示改判
+      if (score.verdict === 'pass' && weightedScore(score, config) < config.reviewMinWeighted) {
+        return 'below-min'
+      }
       const p = patents.find((x) => x.id === patentId)!
       setPatents((ps) =>
         ps.map((x) => {
@@ -213,6 +266,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           reason: `审查打回:${score.comment || '未填写意见'}`, kind: 'reject',
         })
       }
+      return 'ok'
     },
 
     saveNotifyConfig: (patentId, cfgs) =>
@@ -221,16 +275,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     createPatent: (title, visibility) => {
       const id = `p${++seq}`
       const emptyScore = { difficulty: 0, nonObviousness: 0, novelty: 0, comment: '', verdict: 'pending' as const }
+      const year = today().slice(0, 4)
       const p: Patent = {
         id,
-        code: `PF-2026-0${17 + patents.length}`,
+        code: `${config.numberPrefix}-${year}-0${17 + patents.length}`,
         title,
         ownerId: me.id,
+        collaborators: [],
         teamId: me.teamId,
         visibility,
         stage: 'draft',
-        createdAt: now().slice(0, 10),
-        dueDates: {},
+        createdAt: today(),
+        // 阶段默认周期(G2):草案截止日自动算出
+        dueDates: { draft: addDays(today(), config.stageDefaults.draft) },
         stageData: {
           draft: { background: '', classification: '', idea: '' },
           patentability: { summary: '', selfAssessment: emptyScore, reviewers: [] },
@@ -287,8 +344,67 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     saveKpiRule: (rule) =>
       setKpiRules((rs) =>
-        rs.some((r) => r.id === rule.id) ? rs.map((r) => (r.id === rule.id ? rule : r)) : [...rs, rule],
+        rs.some((r) => r.id === rule.id)
+          ? rs.map((r) => (r.id === rule.id ? { ...rule, updatedAt: now() } : r))
+          : [...rs, { ...rule, updatedAt: now() }],
       ),
+
+    toggleKpiRule: (id) =>
+      setKpiRules((rs) => rs.map((r) => (r.id === id ? { ...r, enabled: !r.enabled, updatedAt: now() } : r))),
+
+    transferOwnership: (patentId, newOwnerId) => {
+      const p = patents.find((x) => x.id === patentId)!
+      const from = userById(p.ownerId).name
+      const to = userById(newOwnerId).name
+      setPatents((ps) =>
+        ps.map((x) =>
+          x.id === patentId
+            ? {
+                ...x,
+                ownerId: newOwnerId,
+                // 原负责人保留为共同发明人,避免历史作者失去访问权
+                collaborators: [...new Set([...x.collaborators, p.ownerId])].filter((c) => c !== newOwnerId),
+              }
+            : x,
+        ),
+      )
+      pushNotification({ event: 'transition', text: `《${p.title}》负责人由 ${from} 变更为 ${to}`, patentId })
+    },
+
+    setCollaborators: (patentId, ids) =>
+      setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, collaborators: ids } : x))),
+
+    addMember: (m) =>
+      setUsers((us) => [
+        ...us,
+        { id: `u-${++seq}`, ...m, ssoBound: false },
+      ]),
+
+    updateMember: (id, patch) =>
+      setUsers((us) => us.map((u) => (u.id === id ? { ...u, ...patch } : u))),
+
+    updateProfile: (patch) =>
+      setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, ...patch } : u))),
+
+    savePrefs: (patch) =>
+      setPrefsMap((m) => ({ ...m, [me.id]: { ...(m[me.id] ?? DEFAULT_PREFS), ...patch } })),
+
+    createToken: (name, days) => {
+      const token = `pfk_${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`
+      setTokens((ts) => [
+        ...ts,
+        { id: `tk${++seq}`, userId: me.id, name, token, createdAt: now(), expiresAt: addDays(today(), days), revoked: false },
+      ])
+      return token
+    },
+
+    revokeToken: (id) =>
+      setTokens((ts) => ts.map((t) => (t.id === id && t.userId === me.id ? { ...t, revoked: true } : t))),
+
+    adminRevokeToken: (id) => {
+      if (me.role !== 'gl') return
+      setTokens((ts) => ts.map((t) => (t.id === id ? { ...t, revoked: true } : t)))
+    },
 
     setConfig,
     markAllRead: () => setNotifications((ns) => ns.map((n) => ({ ...n, read: true }))),

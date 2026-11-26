@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import { PERSONAS, useStore } from '@/lib/store'
 import { NOTIFY_EVENT_LABEL } from '@/lib/types'
 import {
-  Bell, ChevronsUpDown, FileText, Gauge, LogOut, ShieldCheck, SquarePen,
+  Bell, ChevronsUpDown, FileText, Gauge, LogOut, ShieldCheck, SquarePen, UserRound,
 } from 'lucide-react'
 
 export type Page =
@@ -12,6 +12,7 @@ export type Page =
   | { name: 'patent'; id: string }
   | { name: 'kpi' }
   | { name: 'admin' }
+  | { name: 'profile' }
 
 interface NavItem {
   key: Page['name']
@@ -26,6 +27,7 @@ const NAV: NavItem[] = [
   { key: 'patents', label: '专利库', en: 'PATENTS', icon: FileText },
   { key: 'kpi', label: 'KPI 管理', en: 'KPI', icon: ShieldCheck },
   { key: 'admin', label: '租户管理', en: 'TENANCY', icon: SquarePen, roles: ['gl', 'pl'] },
+  { key: 'profile', label: '个人中心', en: 'PROFILE', icon: UserRound },
 ]
 
 export function AppShell({
@@ -35,10 +37,12 @@ export function AppShell({
   navigate: (p: Page) => void
   children: ReactNode
 }) {
-  const { me, persona, setPersona, notifications, markAllRead, setLoggedIn } = useStore()
+  const { me, persona, setPersona, notifications, markAllRead, setLoggedIn, prefs } = useStore()
   const [notifOpen, setNotifOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
-  const unread = notifications.filter((n) => !n.read).length
+  // 个人通知偏好(U3):被关掉的事件不进入通知流
+  const myNotifications = notifications.filter((n) => prefs.notifyEvents[n.event] !== false)
+  const unread = myNotifications.filter((n) => !n.read).length
 
   return (
     <div className="flex min-h-dvh bg-background">
@@ -114,7 +118,12 @@ export function AppShell({
                     </button>
                   </div>
                   <div className="scrollbar-thin max-h-80 overflow-y-auto">
-                    {notifications.map((n) => (
+                    {myNotifications.length === 0 && (
+                      <p className="px-4 py-8 text-center text-xs text-slate-400">
+                        暂无通知 · 可在「个人中心 → 通知偏好」调整订阅事件
+                      </p>
+                    )}
+                    {myNotifications.map((n) => (
                       <div key={n.id} className={cn('border-b px-4 py-3 last:border-0', !n.read && 'bg-teal-50/50')}>
                         <div className="flex items-center gap-2">
                           <span className={cn(
@@ -187,8 +196,7 @@ export function AppShell({
                   <div className="mt-1 border-t px-2.5 py-2 text-[11px] leading-snug text-slate-400">
                     不同身份看到的菜单、数据范围与可用操作会实时变化
                   </div>
-                </div>
-              </>
+                </div></>
             )}
           </div>
 

@@ -3,7 +3,6 @@ import { useStore, computeKpi, computeStageTrend, monthRange, teamName } from '@
 import { STAGES, stageIndex, stageLabel, type Patent } from '@/lib/types'
 import { DueChip, SectionTitle, StagePill, StageTrendChart, VisibilityTag, STAGE_COLOR } from '@/components/pf'
 import type { Page } from '@/components/AppShell'
-import { userById } from '@/lib/data'
 import { AlertTriangle, ArrowRight, ClipboardCheck, Hourglass } from 'lucide-react'
 
 const TODAY = new Date('2026-11-26')
@@ -14,7 +13,7 @@ function daysUntil(d?: string) {
 }
 
 export default function Dashboard({ navigate }: { navigate: (p: Page) => void }) {
-  const { me, persona, visiblePatents, kpiRules, patents, transitions } = useStore()
+  const { me, persona, visiblePatents, kpiRules, patents, transitions, userById } = useStore()
   const visible = visiblePatents()
   const active = visible.filter((p) => !p.archived) // 归档专利退出流水线视图
 
@@ -41,13 +40,14 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
     return list.sort((a, b) => a.days - b.days)
   }, [active])
 
-  const myPatents = active.filter((p) => p.ownerId === me.id)
+  const myPatents = active.filter((p) => p.ownerId === me.id || p.collaborators.includes(me.id))
   const stageCounts = STAGES.map((s) => ({
     ...s,
     count: active.filter((p) => p.stage === s.key).length,
   }))
 
   const myKpiRules = kpiRules.filter((r) => {
+    if (!r.enabled) return false // 停用的规则不进仪表盘
     if (me.role === 'gl') return true
     if (r.scope.type === 'global') return true
     return r.scope.teamId === me.teamId

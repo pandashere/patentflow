@@ -133,6 +133,7 @@ export interface Patent {
   code: string
   title: string
   ownerId: string
+  collaborators: string[] // 共同发明人:可编辑内容,但不能推进/回退/归档
   teamId: string
   visibility: Visibility
   stage: StageKey
@@ -157,14 +158,50 @@ export interface KpiRule {
   targets: KpiTarget[]
   // 预留:自由计算回调(单项目/整体),默认按比例给分
   scorerHook: string | null
+  enabled: boolean // 停用的规则不参与仪表盘统计
   createdBy: string
+  updatedAt: string
+}
+
+// —— 审查维度(GL 可配:显示名 + 权重) ——
+export interface ReviewDim {
+  key: 'difficulty' | 'nonObviousness' | 'novelty'
+  label: string
+  weight: number
 }
 
 // —— 全局配置 ——
 export interface SystemConfig {
   reviewPassCount: number // GL 配置:至少 n 名 reviewer 通过
+  reviewMinWeighted: number // GL 配置:加权均分下限,低于该值的「通过」不计入门禁
+  reviewDims: ReviewDim[]
+  stageDefaults: Record<StageKey, number> // 各阶段默认周期(天),新建/推进时自动算出 due date
+  classSuggestions: string[] // class 自由文本的建议词表(输入联想,不强制)
+  numberPrefix: string // 专利编号前缀,如 PF
   webhookUrl: string
   ssoProviders: { name: string; issuer: string; enabled: boolean }[]
+  // 通知默认接收人(事件 × 角色);专利级配置可覆盖
+  notifyDefaults: Record<NotifyEvent, { owner: boolean; pl: boolean; gl: boolean }>
+}
+
+// —— 个人 API Token ——
+export interface ApiToken {
+  id: string
+  userId: string
+  name: string
+  token: string
+  createdAt: string
+  expiresAt: string
+  revoked: boolean
+}
+
+// —— 个人偏好 ——
+export interface UserPrefs {
+  notifyEvents: Record<NotifyEvent, boolean> // 哪些事件进入我的通知流
+  dueReminderDays: number[] // 截止提醒提前量(天),如 [3,1,0]
+  quietHours: string // 免打扰时段,如 22:00-08:00
+  defaultVisibility: Visibility // 新建专利默认可见性
+  homePage: 'dashboard' | 'patents' // 默认着陆页
 }
 
 export interface Notification {
