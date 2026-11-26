@@ -26,6 +26,19 @@ async def _next_code(ctx: Ctx) -> str:
     return f"{prefix}{(max(nums) + 1 if nums else 1):03d}"
 
 
+def _draft_code() -> str:
+    # 私有草案不占用正式流水号(否则编号空缺会让 GL 推算出私有件数,违反决策 9)
+    import secrets
+
+    return f"DRAFT-{secrets.token_hex(3).upper()}"
+
+
+async def publish_code(ctx: Ctx, pid: str, code: str) -> None:
+    """私有草案首次变为团队可见 / 公开时分配正式编号。"""
+    if code.startswith("DRAFT-"):
+        await ctx.conn.execute("UPDATE patents SET code = ? WHERE id = ?", (await _next_code(ctx), pid))
+
+
 async def create(ctx: Ctx, title: str, visibility: str) -> str:
     title = title.strip()
     if not title:
@@ -38,7 +51,8 @@ async def create(ctx: Ctx, title: str, visibility: str) -> str:
     await ctx.conn.execute(
         """INSERT INTO patents(id, code, title, owner_id, team_id, visibility, stage, due_dates, created_at)
            VALUES(?,?,?,?,?,?,'draft',?,?)""",
-        (pid, await _next_code(ctx), title, ctx.me["id"], ctx.me["teamId"], visibility, dumps({"draft": due}), created),
+        (pid, _draft_code() if visibility == "private" else await _next_code(ctx), title, ctx.me["id"],
+         ctx.me["teamId"], visibility, dumps({"draft": due}), created),
     )
     await add_transition(ctx, pid, None, "draft", "advance", "创建专利")
     return pid
@@ -155,6 +169,8 @@ async def set_visibility(ctx: Ctx, pid: str, v: str) -> None:
     if v == "private":
         # 私有后 PL/GL 不可见,待批延期将无人能处理:作废,负责人可在阈值内重新申请
         await void_pending_extensions(ctx, pid)
+    else:
+        await publish_code(ctx, pid, p["code"])
     await bump(ctx, pid, visibility=v)
     p["visibility"] = v
     await notify(ctx, "transition", f"《{p['title']}》可见性调整为「{VIS_LABEL[v]}」", p)
@@ -248,6 +264,9 @@ async def transfer(ctx: Ctx, pid: str, to: str, keep_as_collaborator: bool = Tru
     collab = [c for c in p["collaborators"] if c != to]
     if keep_as_collaborator and p["ownerId"] not in collab:
         collab.append(p["ownerId"])
+    if p["visibility"] == "private":
+        # 私有草案的待批延期只有负责人本人(PL/GL)能自批,换了负责人即失去审批人:作废
+        await void_pending_extensions(ctx, pid)
     await bump(ctx, pid, owner_id=to, collaborators=collab)
     if not quiet:
         p["ownerId"], p["collaborators"] = to, collab

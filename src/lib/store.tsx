@@ -109,7 +109,8 @@ export interface StageConflict {
   note: string
 }
 
-type ExtResult = 'applied' | 'pending' | 'invalid' | 'beyond-cycle'
+// 成功返回状态;失败返回后端给出的原因(直接展示在延期框内)
+type ExtResult = 'applied' | 'pending' | { error: string }
 
 interface Store {
   ready: boolean
@@ -299,8 +300,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   // —— 周期与逾期(纯派生) ——
+  // 与后端一致:重叠时优先进行中的周期,再取最早开始者
   const cycleOfPatent = (p: Patent) =>
-    cycles.filter((c) => p.createdAt >= c.start && p.createdAt <= c.end).sort((a, c) => a.start.localeCompare(c.start))[0]
+    cycles
+      .filter((c) => p.createdAt >= c.start && p.createdAt <= c.end)
+      .sort((a, c) => Number(a.status === 'closed') - Number(c.status === 'closed') || a.start.localeCompare(c.start))[0]
   const activeCycle = () => cycles.find((c) => c.status === 'active')
   const stageOverdueDays = (p: Patent) => {
     if (p.archived) return 0
@@ -517,9 +521,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await reload()
         return r.status
       } catch (e) {
-        if (e instanceof ApiError && e.code === 'beyond_cycle') return 'beyond-cycle'
-        if (e instanceof ApiError && e.status === 409) setError(e.message)
-        return 'invalid'
+        return { error: e instanceof Error ? e.message : String(e) }
       }
     },
     reviewExtension: async (pid, eid, approve) => {

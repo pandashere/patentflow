@@ -98,7 +98,9 @@ function Console({ admin, onLogout }: { admin: string; onLogout: () => void }) {
   const [q, setQ] = useState('')
   const [err, setErr] = useState('')
   const [secret, setSecret] = useState<{ title: string; value: string; note: string } | null>(null)
-  const [confirm, setConfirm] = useState<{ title: string; body: string; run: () => Promise<void> } | null>(null)
+  // needReason:确认前必须填写原因(如拒绝注册,原因会告知对方)
+  const [confirm, setConfirm] = useState<{ title: string; body: string; needReason?: boolean; run: (reason: string) => Promise<void> } | null>(null)
+  const [reason, setReason] = useState('')
   const [newTeam, setNewTeam] = useState('')
   const [nu, setNu] = useState({ name: '', email: '', title: '', teamId: '', role: 'user' as Role })
 
@@ -235,8 +237,8 @@ function Console({ admin, onLogout }: { admin: string; onLogout: () => void }) {
                             通过注册
                           </ActBtn>
                           <ActBtn icon={X} onClick={() => setConfirm({
-                            title: `拒绝 ${u.name} 的注册?`, body: '对方会收到通知,可以重新申请。',
-                            run: () => run(() => api.post(`/sysadmin/registrations/${u.id}/reject`, {})),
+                            title: `拒绝 ${u.name} 的注册?`, body: '原因会通知给对方,对方可以重新申请。', needReason: true,
+                            run: (why) => run(() => api.post(`/sysadmin/registrations/${u.id}/reject`, { reason: why })),
                           })}>
                             拒绝
                           </ActBtn>
@@ -363,12 +365,16 @@ function Console({ admin, onLogout }: { admin: string; onLogout: () => void }) {
       {confirm && (
         <Dialog title={confirm.title} onClose={() => setConfirm(null)}>
           <p className="text-[13px] text-slate-600">{confirm.body}</p>
+          {confirm.needReason && (
+            <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="原因(必填)" className={cn(inputCls, 'mt-3 w-full py-2')} />
+          )}
           <div className="mt-4 flex justify-end gap-2">
             <button type="button" onClick={() => { setConfirm(null); load() }} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">取消</button>
             <button
               type="button"
-              onClick={async () => { const c = confirm; setConfirm(null); await c.run() }}
-              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+              disabled={!!confirm.needReason && !reason.trim()}
+              onClick={async () => { const c = confirm; const why = reason.trim(); setConfirm(null); setReason(''); await c.run(why) }}
+              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
             >
               确认
             </button>

@@ -580,8 +580,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             onClick: async () => {
               const r = await store.requestExtension(patent.id, extDate, reason.trim())
               if (r === 'applied' || r === 'pending') close()
-              else if (r === 'beyond-cycle') setExtMsg(`超出所属周期结束日(${cycle?.end})。跨周期项目请由 GL 标记。`)
-              else setExtMsg('新截止日必须晚于当前截止日')
+              else setExtMsg(r.error)
             },
           }}
         >

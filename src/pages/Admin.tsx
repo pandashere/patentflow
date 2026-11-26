@@ -834,7 +834,7 @@ function PendingRegistrations() {
               {rejecting === u.id ? (
                 <span className="flex items-center gap-1.5">
                   <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="原因(会告知对方)" className={cn(inputCls, 'w-44 py-1 text-xs')} />
-                  <button type="button" onClick={() => { rejectRegistration(u.id, reason); setRejecting(null); setReason('') }} className="rounded-md border border-red-300 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50">确认拒绝</button>
+                  <button type="button" disabled={!reason.trim()} onClick={() => { rejectRegistration(u.id, reason.trim()); setRejecting(null); setReason('') }} className="rounded-md border border-red-300 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">确认拒绝</button>
                   <button type="button" onClick={() => setRejecting(null)} className="text-xs text-slate-400">取消</button>
                 </span>
               ) : (

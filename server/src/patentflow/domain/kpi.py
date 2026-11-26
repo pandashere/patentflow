@@ -194,7 +194,29 @@ async def save_cycle(ctx: Ctx, c: dict[str, Any]) -> str:
            ON CONFLICT(id) DO UPDATE SET name=excluded.name, start=excluded.start, end=excluded.end""",
         (cid, name, start, end),
     )
+    if ex:
+        await _clamp_to_cycle(ctx, cid, end)
     return cid
+
+
+async def _clamp_to_cycle(ctx: Ctx, cid: str, end: str) -> None:
+    """周期结束日调整后,按决策 18 截断绑定规则的目标截止日、以及归属该周期的非跨周期专利截止日。"""
+    from .common import cycle_of
+
+    async with ctx.conn.execute("SELECT id, targets FROM kpi_rules WHERE cycle_id = ?", (cid,)) as cur:
+        for r in await cur.fetchall():
+            targets = [{**t, "deadline": min(t["deadline"], end)} for t in loads(r["targets"], [])]
+            await ctx.conn.execute("UPDATE kpi_rules SET targets = ? WHERE id = ?", (dumps(targets), r["id"]))
+    async with ctx.conn.execute("SELECT id, created_at, due_dates FROM patents WHERE cross_cycle = 0") as cur:
+        rows = await cur.fetchall()
+    for r in rows:
+        c = await cycle_of(ctx.conn, r["created_at"])
+        if not c or c["id"] != cid:
+            continue
+        due = loads(r["due_dates"], {})
+        clamped = {k: min(v, end) for k, v in due.items()}
+        if clamped != due:
+            await ctx.conn.execute("UPDATE patents SET due_dates = ?, rev = rev + 1 WHERE id = ?", (dumps(clamped), r["id"]))
 
 
 async def close_cycle(ctx: Ctx, cid: str) -> int:

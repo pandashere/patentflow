@@ -26,8 +26,16 @@ async def _users(ctx: Ctx, ids: Iterable[str]) -> list[dict[str, Any]]:
 
 
 async def _team_pl(ctx: Ctx, team_id: str) -> list[str]:
+    """「本组 PL」= 团队指派的现任负责人(teams.pl_id,可能是兼任的 GL);未指派时回退为本组 PL 角色成员。"""
     async with ctx.conn.execute(
-        "SELECT id FROM users WHERE role='pl' AND team_id=? AND deactivated_at IS NULL", (team_id,)
+        """SELECT u.id FROM teams t JOIN users u ON u.id = t.pl_id
+           WHERE t.id = ? AND u.deactivated_at IS NULL AND u.pending_at IS NULL""", (team_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if row:
+        return [row["id"]]
+    async with ctx.conn.execute(
+        "SELECT id FROM users WHERE role='pl' AND team_id=? AND deactivated_at IS NULL AND pending_at IS NULL", (team_id,)
     ) as cur:
         return [r["id"] for r in await cur.fetchall()]
 

@@ -278,6 +278,7 @@ SYSADMIN_ACTOR = {"id": "sysadmin", "name": "系统管理员", "role": "gl", "te
 class ApproveIn(BaseModel):
     teamId: str | None = None
     role: Literal["user", "pl", "gl"] | None = None
+    reason: str = ""  # 拒绝时必填
 
 
 @router.post("/registrations/{uid}/{action}")
@@ -291,7 +292,7 @@ async def decide_registration(uid: str, action: Literal["approve", "reject"], bo
         if action == "approve":
             await members.approve(ctx, uid, body.teamId, body.role)
         else:
-            await members.reject(ctx, uid, "系统管理员未通过")
+            await members.reject(ctx, uid, body.reason)
         await audit(ctx.conn, request, admin, f"registration_{action}", u["email"])
     return {"ok": True}
 

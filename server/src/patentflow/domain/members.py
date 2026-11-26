@@ -6,6 +6,7 @@ from typing import Any
 from ..security import hash_password, new_id
 from ..timeutil import now
 from .accounts import ACTIVATION_TTL_MINUTES, issue_password_link
+from .patents import publish_code
 from .common import bump
 from .constants import ROLES
 from .ctx import Ctx
@@ -135,11 +136,13 @@ async def approve(ctx: Ctx, uid: str, team_id: str | None = None, role: str | No
 
 
 async def reject(ctx: Ctx, uid: str, reason: str) -> None:
+    if not reason.strip():
+        raise bad_request("请填写拒绝原因(会告知申请人)")
     u = await _pending(ctx, uid)
     if not can_manage_team(ctx, u["team_id"]):
         raise forbidden("只有 GL 或该团队的 PL 可以审批")
     # 通知需在删除前发出(收件人须存在)
-    await notify(ctx, "transition", f"你的 PATENTFLOW 注册未通过:{reason.strip() or '未说明原因'}",
+    await notify(ctx, "transition", f"你的 PATENTFLOW 注册未通过:{reason.strip()}",
                  only=[uid], security=True)
     for t in ("notifications", "password_resets", "user_prefs", "sessions", "api_tokens"):
         await ctx.conn.execute(f"DELETE FROM {t} WHERE user_id = ?", (uid,))
@@ -244,8 +247,8 @@ async def update_member(ctx: Ctx, uid: str, patch: dict[str, Any]) -> None:
     for k in ("name", "title"):
         if k in patch and str(patch[k]).strip():
             sets[k] = str(patch[k]).strip()
-    if "email" in patch and str(patch["email"]).strip().lower() != u["email"].lower():
-        sets["email"] = str(patch["email"]).strip().lower()
+    # 邮箱是登录名与安全通知地址:GL 不能改(否则可借「忘记密码」接管账号,读到对方私有草案);
+    # 由本人在个人中心修改,或由系统管理员处理
     if not sets:
         return
     cols = ", ".join(f"{k} = ?" for k in sets)
@@ -298,6 +301,7 @@ async def deactivate(ctx: Ctx, uid: str, assignments: dict[str, str]) -> dict[st
         cols: dict[str, Any] = {"owner_id": target, "collaborators": collab}
         if p["visibility"] == "private":
             cols["visibility"] = "team"
+            await publish_code(ctx, p["id"], p["code"])
         await bump(ctx, p["id"], **cols)
         p.update(ownerId=target, collaborators=collab, visibility=cols.get("visibility", p["visibility"]))
         await notify(ctx, "transition", f"《{p['title']}》因 {u['name']} 停用已交接给你", p, only=[target])

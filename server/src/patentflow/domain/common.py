@@ -63,9 +63,12 @@ async def has_left_draft(conn: aiosqlite.Connection, p: dict[str, Any]) -> bool:
 
 
 async def cycle_of(conn: aiosqlite.Connection, created_at: str) -> dict[str, Any] | None:
-    """专利按创建日归入周期;多个周期重叠时取最早开始者。"""
+    """专利按创建日归入周期;多个重叠时优先进行中的周期,再取最早开始者
+    (避免提前收口的旧周期继续吸收新专利)。"""
     async with conn.execute(
-        "SELECT * FROM cycles WHERE start <= ? AND end >= ? ORDER BY start LIMIT 1", (created_at[:10], created_at[:10])
+        """SELECT * FROM cycles WHERE start <= ? AND end >= ?
+           ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, start LIMIT 1""",
+        (created_at[:10], created_at[:10])
     ) as cur:
         r = await cur.fetchone()
     return dict(r) if r else None
