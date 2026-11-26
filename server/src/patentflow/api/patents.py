@@ -52,6 +52,7 @@ class ArchiveIn(BaseModel):
 
 class IdsIn(BaseModel):
     userIds: list[str]
+    rev: int | None = None  # 打开名单时的专利版本,他人已改则返回 409
 
 
 class TransferIn(BaseModel):
@@ -211,7 +212,7 @@ async def unarchive(pid: str, body: ReasonIn, request: Request, auth: Auth = Dep
 
 @router.put("/patents/{pid}/collaborators")
 async def collaborators(pid: str, body: IdsIn, request: Request, auth: Auth = Depends(current_auth)) -> dict[str, Any]:
-    await run(request, auth, lambda ctx: patents.set_collaborators(ctx, pid, body.userIds))
+    await run(request, auth, lambda ctx: patents.set_collaborators(ctx, pid, body.userIds, body.rev))
     return await patent_out(request, pid)  # type: ignore[return-value]
 
 

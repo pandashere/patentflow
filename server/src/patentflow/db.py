@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS patents (
   notify TEXT NOT NULL DEFAULT '[]',
   archived TEXT,                       -- JSON {kind, at, by, reason}
   review_round INTEGER NOT NULL DEFAULT 1,
+  cycle_id TEXT,                       -- 创建时确定的所属周期(之后收口 / 新建周期不改变归属)
   created_at TEXT NOT NULL,
   rev INTEGER NOT NULL DEFAULT 1       -- 乐观锁
 );
@@ -186,7 +187,7 @@ class Database:
     @staticmethod
     async def _migrate(conn: aiosqlite.Connection) -> None:
         """轻量迁移:为旧库补列(只增不删)。"""
-        for table, col, ddl in [("users", "pending_at", "TEXT")]:
+        for table, col, ddl in [("users", "pending_at", "TEXT"), ("patents", "cycle_id", "TEXT")]:
             async with conn.execute(f"PRAGMA table_info({table})") as cur:
                 cols = {r[1] for r in await cur.fetchall()}
             if col not in cols:

@@ -610,7 +610,11 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             共同发明人可查看并编辑各阶段内容(生成版本记录),但不能推进/回退/归档/变更可见性。
           </p>
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {store.activeUsers.filter((u) => u.id !== patent.ownerId).map((u) => {
+            {[
+              ...store.activeUsers.filter((u) => u.id !== patent.ownerId),
+              // 已停用的原共同发明人仍显示,便于移除
+              ...patent.collaborators.map((id) => userById(id)).filter((u) => u.deactivated),
+            ].map((u) => {
               const on = patent.collaborators.includes(u.id)
               return (
                 <ToggleTag
@@ -618,7 +622,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
                   on={on}
                   onClick={() => store.setCollaborators(patent.id, on ? patent.collaborators.filter((c) => c !== u.id) : [...patent.collaborators, u.id])}
                 >
-                  {u.name}
+                  {u.name}{u.deactivated ? '(已停用)' : ''}
                 </ToggleTag>
               )
             })}

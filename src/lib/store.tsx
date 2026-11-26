@@ -300,11 +300,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   // —— 周期与逾期(纯派生) ——
-  // 与后端一致:重叠时优先进行中的周期,再取最早开始者
+  // 与后端一致:以创建时记录的 cycleId 为准;旧数据按创建日落入的最早开始周期
   const cycleOfPatent = (p: Patent) =>
-    cycles
-      .filter((c) => p.createdAt >= c.start && p.createdAt <= c.end)
-      .sort((a, c) => Number(a.status === 'closed') - Number(c.status === 'closed') || a.start.localeCompare(c.start))[0]
+    p.cycleId
+      ? cycles.find((c) => c.id === p.cycleId)
+      : cycles.filter((c) => p.createdAt >= c.start && p.createdAt <= c.end).sort((a, c) => a.start.localeCompare(c.start))[0]
   const activeCycle = () => cycles.find((c) => c.status === 'active')
   const stageOverdueDays = (p: Patent) => {
     if (p.archived) return 0
@@ -480,12 +480,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reactivateMember: async (uid) => { await act(() => api.post(`/users/${uid}/reactivate`)) },
     migrateTeam: async (pid, teamId) => { await act(() => api.post(`${P(pid)}/team`, { teamId })) },
     deletePatent: async (pid) => (await act(() => api.del(P(pid)))) !== undefined,
-    setCollaborators: async (pid, ids) => { await act(() => api.put(`${P(pid)}/collaborators`, { userIds: ids })) },
+    setCollaborators: async (pid, ids) => {
+      const rev = patents.find((p) => p.id === pid)?.rev
+      await act(() => api.put(`${P(pid)}/collaborators`, { userIds: ids, rev }))
+    },
     saveKpiRule: async (rule) => { await act(() => api.post('/kpi/rules', rule)) },
     toggleKpiRule: async (id) => { await act(() => api.post(`/kpi/rules/${id}/toggle`)) },
     setConfig: async (c) => {
+      // 只提交改动过的字段(两级),由后端与当前配置合并,避免整份旧配置覆盖他人刚保存的设置
+      const prev = config as unknown as Record<string, unknown>
+      const next = c as unknown as Record<string, unknown>
+      const patch: Record<string, unknown> = {}
+      for (const k of Object.keys(next)) {
+        const a = prev[k], v = next[k]
+        if (JSON.stringify(a) === JSON.stringify(v)) continue
+        if (v && typeof v === 'object' && !Array.isArray(v) && a && typeof a === 'object' && !Array.isArray(a)) {
+          const sub: Record<string, unknown> = {}
+          for (const sk of Object.keys(v)) {
+            const sv = (v as Record<string, unknown>)[sk]
+            if (JSON.stringify((a as Record<string, unknown>)[sk]) !== JSON.stringify(sv)) sub[sk] = sv
+          }
+          patch[k] = sub
+        } else {
+          patch[k] = v
+        }
+      }
       if (b) setBoot({ ...b, config: c }) // 乐观更新,输入不卡顿
-      await act(() => api.put('/config', c))
+      if (Object.keys(patch).length) await act(() => api.put('/config', patch))
     },
     addMember: async (m) =>
       (await act(() => api.post<{ activationLink: string }>('/users', m)))?.activationLink ?? null,
@@ -517,7 +538,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     closeCycle: async (id) => { await act(() => api.post(`/cycles/${id}/close`)) },
     requestExtension: async (pid, newDue, reason) => {
       try {
-        const r = await api.post<{ status: 'applied' | 'pending' }>(`${P(pid)}/extensions`, { newDue, reason })
+        const stage = patents.find((p) => p.id === pid)?.stage
+        const r = await api.post<{ status: 'applied' | 'pending' }>(`${P(pid)}/extensions`, { newDue, reason, stage })
         await reload()
         return r.status
       } catch (e) {

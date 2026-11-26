@@ -197,7 +197,8 @@ export interface Patent {
   stageData: StageDataMap
   notify: StageNotifyConfig[]
   needsRecheck: StageKey[]
-  rev?: number // 后端乐观锁版本 // 多级回退后被跳过的后续阶段:数据保留,再次到达时提示复核,保存一次即清除
+  rev?: number // 后端乐观锁版本
+  cycleId?: string | null // 创建时确定的所属周期 // 多级回退后被跳过的后续阶段:数据保留,再次到达时提示复核,保存一次即清除
 }
 
 // —— KPI ——

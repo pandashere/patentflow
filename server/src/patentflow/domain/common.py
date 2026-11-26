@@ -62,23 +62,37 @@ async def has_left_draft(conn: aiosqlite.Connection, p: dict[str, Any]) -> bool:
         return await cur.fetchone() is not None
 
 
-async def cycle_of(conn: aiosqlite.Connection, created_at: str) -> dict[str, Any] | None:
-    """专利按创建日归入周期;多个重叠时优先进行中的周期,再取最早开始者
-    (避免提前收口的旧周期继续吸收新专利)。"""
+async def cycle_for_new(conn: aiosqlite.Connection, day: str) -> dict[str, Any] | None:
+    """为新建专利确定所属周期:覆盖创建日的周期中,优先进行中的,再取最早开始者
+    (避免提前收口的旧周期继续吸收新专利)。结果写入 patents.cycle_id,之后不再改变。"""
     async with conn.execute(
         """SELECT * FROM cycles WHERE start <= ? AND end >= ?
            ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, start LIMIT 1""",
-        (created_at[:10], created_at[:10])
+        (day[:10], day[:10]),
     ) as cur:
         r = await cur.fetchone()
     return dict(r) if r else None
 
 
-async def default_due(ctx: Ctx, stage: str, created_at: str, cross_cycle: bool) -> str:
+async def patent_cycle(conn: aiosqlite.Connection, p: dict[str, Any]) -> dict[str, Any] | None:
+    """专利的所属周期:以创建时记录的 cycleId 为准;旧数据(未记录)按创建日落入的最早开始周期(决策 19)。"""
+    if p.get("cycleId"):
+        async with conn.execute("SELECT * FROM cycles WHERE id = ?", (p["cycleId"],)) as cur:
+            r = await cur.fetchone()
+        return dict(r) if r else None
+    day = p["createdAt"][:10]
+    async with conn.execute(
+        "SELECT * FROM cycles WHERE start <= ? AND end >= ? ORDER BY start LIMIT 1", (day, day)
+    ) as cur:
+        r = await cur.fetchone()
+    return dict(r) if r else None
+
+
+async def default_due(ctx: Ctx, stage: str, p: dict[str, Any]) -> str:
     """阶段默认截止日:今天 + 默认周期;非跨周期项目按所属周期结束日截断。"""
     due = add_days(today(), int(ctx.cfg["stageDefaults"][stage]))
-    c = await cycle_of(ctx.conn, created_at)
-    if c and not cross_cycle and due > c["end"]:
+    c = await patent_cycle(ctx.conn, p)
+    if c and not p.get("crossCycle") and due > c["end"]:
         due = c["end"]
     return due
 

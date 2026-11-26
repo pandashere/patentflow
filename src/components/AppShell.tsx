@@ -37,15 +37,14 @@ export function AppShell({
   navigate: (p: Page) => void
   children: ReactNode
 }) {
-  const { me, persona, setPersona, notifications, markAllRead, logout, prefs, visiblePatents, providers } = useStore()
+  const { me, persona, setPersona, notifications, markAllRead, logout, visiblePatents, providers } = useStore()
   const [notifOpen, setNotifOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
   // 个人通知偏好(U3):被关掉的事件不进入通知流
   // 只投递与我可见专利相关的通知:私有专利的事件不会发给 PL/GL(决策 9)
   const visibleIds = new Set(visiblePatents().map((p) => p.id))
-  const myNotifications = notifications.filter(
-    (n) => prefs.notifyEvents[n.event] !== false && (!n.patentId || visibleIds.has(n.patentId)),
-  )
+  // 订阅偏好已由后端在投递时处理(账号安全与自检通知强制送达),这里不再按偏好二次过滤
+  const myNotifications = notifications.filter((n) => !n.patentId || visibleIds.has(n.patentId))
   const unread = myNotifications.filter((n) => !n.read).length
 
   return (

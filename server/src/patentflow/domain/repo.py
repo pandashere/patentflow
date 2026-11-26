@@ -131,7 +131,7 @@ async def load_patents(conn: aiosqlite.Connection, ids: Iterable[str] | None = N
             "archived": loads(r["archived"]), "createdAt": r["created_at"],
             "dueDates": loads(r["due_dates"], {}), "extensions": exts.get(pid, []),
             "stageData": sd, "notify": loads(r["notify"], []),
-            "needsRecheck": loads(r["needs_recheck"], []), "rev": r["rev"],
+            "needsRecheck": loads(r["needs_recheck"], []), "rev": r["rev"], "cycleId": r["cycle_id"],
             "_reviewerIds": active_reviewers.get(pid, set()),
         })
     return out

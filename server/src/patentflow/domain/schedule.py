@@ -9,20 +9,22 @@ from __future__ import annotations
 from ..security import new_id
 from ..timeutil import days_between, now
 from . import access
-from .common import bump, cycle_of, get_operable, get_visible, label, overdue_days
+from .common import bump, get_operable, patent_cycle, get_visible, label, overdue_days
 from .ctx import Ctx
 from .errors import bad_request, conflict, forbidden, not_found
 from .notifications import notify
 
 
-async def request_extension(ctx: Ctx, pid: str, new_due: str, reason: str) -> str:
+async def request_extension(ctx: Ctx, pid: str, new_due: str, reason: str, stage: str | None = None) -> str:
     p = await get_operable(ctx, pid)
+    if stage and stage != p["stage"]:
+        raise conflict(f"专利已进入「{label(p['stage'])}」阶段,请按当前阶段的截止日重新填写延期")
     old = p["dueDates"].get(p["stage"])
     if not reason.strip():
         raise bad_request("请填写延期原因")
     if not old or new_due <= old:
         raise bad_request("新截止日必须晚于当前截止日")
-    c = await cycle_of(ctx.conn, p["createdAt"])
+    c = await patent_cycle(ctx.conn, p)
     if c and not p["crossCycle"] and new_due > c["end"]:
         raise bad_request(f"超出所属周期结束日({c['end']}),跨周期项目请由 GL 标记", code="beyond_cycle")
     if any(e["status"] == "pending" and e["stage"] == p["stage"] for e in p["extensions"]):
@@ -63,7 +65,7 @@ async def review_extension(ctx: Ctx, pid: str, ext_id: str, approve: bool) -> No
         raise conflict("该申请已处理或已作废")
     if approve:
         # 批准时按当前跨周期标记与周期结束日复核(申请后 GL 可能取消了跨周期标记)
-        c = await cycle_of(ctx.conn, p["createdAt"])
+        c = await patent_cycle(ctx.conn, p)
         if c and not p["crossCycle"] and e["newDue"] > c["end"]:
             raise conflict(f"申请的截止日已超出所属周期结束日({c['end']}),只能驳回", reason="beyond_cycle")
     self_approved = 1 if (e["by"] == ctx.me["id"] or p["ownerId"] == ctx.me["id"]) else 0

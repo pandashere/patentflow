@@ -8,7 +8,7 @@ from ..security import new_id
 from ..timeutil import now, today
 from . import access
 from .common import (
-    add_transition, bump, cycle_of, default_due, get_operable, get_visible, has_left_draft, label, overdue_days,
+    add_transition, bump, cycle_for_new, default_due, patent_cycle, get_operable, get_visible, has_left_draft, label, overdue_days,
     void_pending_extensions,
 )
 from .constants import STAGE_FIELDS, STAGE_KEYS, VIS_LABEL, VISIBILITIES, stage_index
@@ -47,12 +47,13 @@ async def create(ctx: Ctx, title: str, visibility: str) -> str:
         raise bad_request("可见性非法")
     pid = new_id("p")
     created = today()
-    due = await default_due(ctx, "draft", created, False)
+    cycle = await cycle_for_new(ctx.conn, created)
+    due = await default_due(ctx, "draft", {"cycleId": cycle["id"] if cycle else None, "createdAt": created})
     await ctx.conn.execute(
-        """INSERT INTO patents(id, code, title, owner_id, team_id, visibility, stage, due_dates, created_at)
-           VALUES(?,?,?,?,?,?,'draft',?,?)""",
+        """INSERT INTO patents(id, code, title, owner_id, team_id, visibility, stage, due_dates, created_at, cycle_id)
+           VALUES(?,?,?,?,?,?,'draft',?,?,?)""",
         (pid, _draft_code() if visibility == "private" else await _next_code(ctx), title, ctx.me["id"],
-         ctx.me["teamId"], visibility, dumps({"draft": due}), created),
+         ctx.me["teamId"], visibility, dumps({"draft": due}), created, cycle["id"] if cycle else None),
     )
     await add_transition(ctx, pid, None, "draft", "advance", "创建专利")
     return pid
@@ -123,7 +124,7 @@ async def advance(ctx: Ctx, pid: str, reason: str, rev: int | None = None) -> st
         reentered = await cur.fetchone() is not None or nxt in p["needsRecheck"]
     existing = due_dates.get(nxt)
     if not existing or existing < today() or reentered:
-        due_dates[nxt] = await default_due(ctx, nxt, p["createdAt"], p["crossCycle"])
+        due_dates[nxt] = await default_due(ctx, nxt, p)
 
     await void_pending_extensions(ctx, pid)
     if p["stage"] == "patentability":
@@ -210,15 +211,18 @@ async def _active_user(ctx: Ctx, uid: str) -> dict[str, Any]:
     return dict(u)
 
 
-async def set_collaborators(ctx: Ctx, pid: str, ids: list[str]) -> None:
+async def set_collaborators(ctx: Ctx, pid: str, ids: list[str], rev: int | None = None) -> None:
+    """整表替换共同发明人。rev 用于防止旧页面把他人已移除的成员加回来;
+    只校验本次新增的成员(已停用的原成员可以保留或移除)。"""
     p = await get_operable(ctx, pid)
     clean = []
     for uid in dict.fromkeys(ids):
         if uid == p["ownerId"]:
             continue
-        await _active_user(ctx, uid)
+        if uid not in p["collaborators"]:
+            await _active_user(ctx, uid)
         clean.append(uid)
-    await bump(ctx, pid, collaborators=clean)
+    await bump(ctx, pid, rev, collaborators=clean)
 
 
 async def save_notify(ctx: Ctx, pid: str, cfgs: list[dict[str, Any]]) -> None:
@@ -248,7 +252,7 @@ async def toggle_cross_cycle(ctx: Ctx, pid: str) -> bool:
         return True
     # 取消豁免:超出所属周期结束日的截止日按决策 18 截断(延期记录保留供追溯)
     due_dates = dict(p["dueDates"])
-    c = await cycle_of(ctx.conn, p["createdAt"])
+    c = await patent_cycle(ctx.conn, p)
     if c:
         due_dates = {k: (c["end"] if v > c["end"] else v) for k, v in due_dates.items()}
     await bump(ctx, pid, cross_cycle=0, due_dates=due_dates)

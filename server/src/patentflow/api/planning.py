@@ -20,6 +20,7 @@ router = APIRouter(tags=["planning"])
 class ExtIn(BaseModel):
     newDue: str
     reason: str
+    stage: str | None = None  # 打开延期框时的阶段;阶段已变化返回 409
 
 
 class CycleIn(BaseModel):
@@ -31,7 +32,7 @@ class CycleIn(BaseModel):
 
 @router.post("/patents/{pid}/extensions")
 async def request_ext(pid: str, body: ExtIn, request: Request, auth: Auth = Depends(current_auth)) -> dict[str, Any]:
-    status = await run(request, auth, lambda ctx: schedule.request_extension(ctx, pid, body.newDue, body.reason))
+    status = await run(request, auth, lambda ctx: schedule.request_extension(ctx, pid, body.newDue, body.reason, body.stage))
     return {"status": status, "patent": await patent_out(request, pid)}
 
 

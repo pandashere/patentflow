@@ -194,23 +194,25 @@ async def save_cycle(ctx: Ctx, c: dict[str, Any]) -> str:
            ON CONFLICT(id) DO UPDATE SET name=excluded.name, start=excluded.start, end=excluded.end""",
         (cid, name, start, end),
     )
-    if ex:
-        await _clamp_to_cycle(ctx, cid, end)
+    # 尚未归属周期的专利(创建时无覆盖周期),创建日落入本周期的纳入本周期(决策 19)
+    await ctx.conn.execute(
+        "UPDATE patents SET cycle_id = ? WHERE cycle_id IS NULL AND created_at BETWEEN ? AND ?", (cid, start, end))
+    await _clamp_to_cycle(ctx, cid, end)
     return cid
 
 
 async def _clamp_to_cycle(ctx: Ctx, cid: str, end: str) -> None:
     """周期结束日调整后,按决策 18 截断绑定规则的目标截止日、以及归属该周期的非跨周期专利截止日。"""
-    from .common import cycle_of
+    from .common import patent_cycle
 
     async with ctx.conn.execute("SELECT id, targets FROM kpi_rules WHERE cycle_id = ?", (cid,)) as cur:
         for r in await cur.fetchall():
             targets = [{**t, "deadline": min(t["deadline"], end)} for t in loads(r["targets"], [])]
             await ctx.conn.execute("UPDATE kpi_rules SET targets = ? WHERE id = ?", (dumps(targets), r["id"]))
-    async with ctx.conn.execute("SELECT id, created_at, due_dates FROM patents WHERE cross_cycle = 0") as cur:
+    async with ctx.conn.execute("SELECT id, created_at, cycle_id, due_dates FROM patents WHERE cross_cycle = 0") as cur:
         rows = await cur.fetchall()
     for r in rows:
-        c = await cycle_of(ctx.conn, r["created_at"])
+        c = await patent_cycle(ctx.conn, {"cycleId": r["cycle_id"], "createdAt": r["created_at"]})
         if not c or c["id"] != cid:
             continue
         due = loads(r["due_dates"], {})

@@ -231,12 +231,15 @@ async def get_config(auth: Auth = Depends(current_auth), db: Database = Depends(
 
 @router.put("/config")
 async def put_config(body: dict[str, Any], request: Request, auth: Auth = Depends(require_gl)) -> dict[str, bool]:
-    try:
-        cfg = validate_system(body)
-    except (ValueError, KeyError, TypeError) as e:
-        raise bad_request(str(e)) from e
-
+    """接受部分字段:在写事务内与当前配置合并(两级),避免旧页面整份提交覆盖他人刚保存的设置。"""
     async def go(ctx):  # type: ignore[no-untyped-def]
+        merged = {**ctx.cfg}
+        for k, v in body.items():
+            merged[k] = {**merged[k], **v} if isinstance(v, dict) and isinstance(merged.get(k), dict) else v
+        try:
+            cfg = validate_system(merged)
+        except (ValueError, KeyError, TypeError) as e:
+            raise bad_request(str(e)) from e
         await save_system(ctx.conn, cfg)
 
     await run(request, auth, go)
