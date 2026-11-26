@@ -70,6 +70,7 @@ interface Bootstrap {
   transitions: StageTransition[]
   kpiRules: KpiRule[]
   kpiReports: Record<string, Omit<KpiReport, 'rule'>>
+  pendingRegistrations: User[]
   cycles: Cycle[]
   notifications: Notification[]
   tokens: ApiToken[]
@@ -77,7 +78,22 @@ interface Bootstrap {
   demo: boolean
 }
 
+// 回调探测结果
+export interface ProbeResult {
+  ok: boolean
+  status: number | null
+  latencyMs: number
+  error: string | null
+}
+
+export interface NotifyPreview {
+  recipients: { id: string; name: string; delivered: boolean; reason: string }[]
+  webhookConfigured: boolean
+  webhook: ProbeResult | null
+}
+
 interface Providers {
+  selfRegistration?: boolean
   local: boolean
   demo: boolean
   sso: { name: string; issuer: string; enabled: boolean; connected: boolean }[]
@@ -165,7 +181,18 @@ interface Store {
   saveKpiRule: (rule: KpiRule) => Promise<void>
   toggleKpiRule: (id: string) => Promise<void>
   setConfig: (c: SystemConfig) => Promise<void>
-  addMember: (m: { name: string; email: string; title: string; teamId: string; role: Role }) => Promise<void>
+  addMember: (m: { name: string; email: string; title: string; teamId: string; role: Role }) => Promise<string | null>
+  canManageTeam: (teamId: string) => boolean
+  pendingRegistrations: User[]
+  approveRegistration: (uid: string, patch?: { teamId?: string; role?: Role }) => Promise<void>
+  rejectRegistration: (uid: string, reason: string) => Promise<void>
+  createTeam: (name: string, plId: string | null, demoteOld: boolean) => Promise<boolean>
+  renameTeam: (id: string, name: string) => Promise<void>
+  deleteTeam: (id: string) => Promise<void>
+  setTeamPl: (id: string, userId: string | null, demoteOld: boolean) => Promise<boolean>
+  testWebhook: (url: string) => Promise<ProbeResult & { url: string; signed: boolean }>
+  notifyMeTest: () => Promise<{ webhookConfigured: boolean; webhook: ProbeResult | null; quietNow: boolean; quietHours: string; mutedEvents: string[] } | null>
+  previewNotify: (patentId: string, event: string, cfg: StageNotifyConfig[]) => Promise<NotifyPreview | null>
   updateMember: (id: string, patch: Partial<Pick<User, 'role' | 'teamId' | 'name' | 'email'>>) => Promise<void>
   updateProfile: (patch: Partial<Pick<User, 'name' | 'email'>>) => Promise<boolean>
   savePrefs: (patch: Partial<UserPrefs>) => Promise<void>
@@ -207,6 +234,7 @@ const EMPTY_CONFIG: SystemConfig = {
     extensionApprovalThreshold: 14, freezeAdvanceOnOverdue: false, autoNudge: 'off', includeCrossCycleInKpi: true,
     abandonExcludeDays: 30,
   },
+  members: { selfRegistration: true, plCanManage: true },
 }
 const GUEST: User = { id: '', name: '', role: 'user', teamId: '', email: '', title: '', ssoBound: false }
 const DEFAULT_PREFS: UserPrefs = {
@@ -440,7 +468,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (b) setBoot({ ...b, config: c }) // 乐观更新,输入不卡顿
       await act(() => api.put('/config', c))
     },
-    addMember: async (m) => { await act(() => api.post('/users', m)) },
+    addMember: async (m) =>
+      (await act(() => api.post<{ activationLink: string }>('/users', m)))?.activationLink ?? null,
+    canManageTeam: (teamId) =>
+      me.role === 'gl' || (me.role === 'pl' && me.teamId === teamId && config.members.plCanManage),
+    pendingRegistrations: b?.pendingRegistrations ?? [],
+    approveRegistration: async (uid, patch = {}) => { await act(() => api.post(`/registrations/${uid}/approve`, patch)) },
+    rejectRegistration: async (uid, reason) => { await act(() => api.post(`/registrations/${uid}/reject`, { reason })) },
+    createTeam: async (name, plId, demoteOld) =>
+      (await act(() => api.post('/teams', { name, plId, demoteOld }))) !== undefined,
+    renameTeam: async (id, name) => { await act(() => api.patch(`/teams/${id}`, { name })) },
+    deleteTeam: async (id) => { await act(() => api.del(`/teams/${id}`)) },
+    setTeamPl: async (id, userId, demoteOld) =>
+      (await act(() => api.put(`/teams/${id}/pl`, { userId, demoteOld }))) !== undefined,
+    testWebhook: (url) => api.post('/notify/test-webhook', { url }),
+    notifyMeTest: async () => (await act(() => api.post<Awaited<ReturnType<Store['notifyMeTest']>>>('/me/notify-test'))) ?? null,
+    previewNotify: async (pid, event, cfg) => {
+      try {
+        return await api.post<NotifyPreview>(`${P(pid)}/notification-settings/preview`, { event, config: cfg })
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+        return null
+      }
+    },
     updateMember: async (id, patch) => { await act(() => api.patch(`/users/${id}`, patch)) },
     updateProfile: async (patch) => (await act(() => api.put('/me', patch))) !== undefined,
     savePrefs: async (patch) => { await act(() => api.put('/me/prefs', patch)) },

@@ -16,6 +16,7 @@ export interface User {
   ssoIssuer?: string
   // 停用(离职):停用前须完成专利转交;停用后 Token/会话吊销、不可登录、不出现在人员选择器中
   deactivated?: { at: string; by: string }
+  pending?: { at: string } // 自助注册待审批
   password?: string // 种子用户未设密码(演示环境任意输入可登录);重置/修改后即参与校验
 }
 
@@ -31,7 +32,7 @@ export interface PasswordResetToken {
 export interface Team {
   id: string
   name: string
-  plId: string
+  plId: string | null
 }
 
 export interface StageInfo {
@@ -252,6 +253,8 @@ export interface SystemConfig {
   ssoProviders: { name: string; issuer: string; enabled: boolean }[]
   // 通知默认接收人(事件 × 角色);专利级配置可覆盖
   notifyDefaults: Record<NotifyEvent, { owner: boolean; pl: boolean; gl: boolean }>
+  // 成员管理:是否开放自助注册;本组 PL 能否添加成员、审批注册(GL 与系统管理员始终可以)
+  members: { selfRegistration: boolean; plCanManage: boolean }
   overdue: OverduePolicy
 }
 
