@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   session_epoch INTEGER NOT NULL DEFAULT 0,   -- 改密/改角色/停用时 +1,使旧会话失效
   deactivated_at TEXT, deactivated_by TEXT,
+  pending_at TEXT,                             -- 自助注册待审批;审批通过后置空
   created_at TEXT NOT NULL
 );
 
@@ -177,9 +178,19 @@ class Database:
     async def connect(self) -> None:
         self.writer = await self._open()
         await self.writer.executescript(SCHEMA)
+        await self._migrate(self.writer)
         await self.writer.commit()
         # :memory: 无法跨连接共享,测试时读写共用一个连接
         self.reader = self.writer if self.path == ":memory:" else await self._open()
+
+    @staticmethod
+    async def _migrate(conn: aiosqlite.Connection) -> None:
+        """轻量迁移:为旧库补列(只增不删)。"""
+        for table, col, ddl in [("users", "pending_at", "TEXT")]:
+            async with conn.execute(f"PRAGMA table_info({table})") as cur:
+                cols = {r[1] for r in await cur.fetchall()}
+            if col not in cols:
+                await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
     async def _open(self) -> aiosqlite.Connection:
         conn = await aiosqlite.connect(self.path, isolation_level=None)

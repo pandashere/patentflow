@@ -56,6 +56,8 @@ async def login(body: LoginIn, response: Response, db: Database = Depends(get_db
     row = await db.one("SELECT * FROM users WHERE email = ? AND deactivated_at IS NULL", (body.email.strip(),))
     if not row or not verify_password(body.password, row["password_hash"]):
         raise DomainError(401, "login_failed", LOGIN_FAILED)
+    if row["pending_at"]:  # 密码正确才提示,避免泄露注册状态
+        raise DomainError(403, "pending_approval", "账号正在等待审批(GL / 所选团队的 PL / 系统管理员),通过后即可登录")
     sid = secrets.token_urlsafe(32)
     async with db.tx() as conn:
         await conn.execute(
@@ -138,9 +140,43 @@ async def change_password(body: ChangePwdIn, request: Request, response: Respons
     return {"ok": True}
 
 
+class RegisterIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    email: str
+    title: str = ""
+    teamId: str
+    password: str = Field(min_length=8)
+
+
+async def _self_registration(db: Database) -> bool:
+    from ..domain.sysconfig import get_system
+
+    return bool((await get_system(db.reader))["members"].get("selfRegistration", True))  # type: ignore[arg-type]
+
+
+@router.get("/auth/teams")
+async def public_teams(db: Database = Depends(get_db)) -> list[dict[str, str]]:
+    """注册时选择团队(仅在开放自助注册时可用)。"""
+    if not await _self_registration(db):
+        raise DomainError(403, "registration_closed", "自助注册已关闭")
+    return [{"id": t["id"], "name": t["name"]} for t in await db.all("SELECT id, name FROM teams ORDER BY name")]
+
+
+@router.post("/auth/register", status_code=201)
+async def register(body: RegisterIn, request: Request, db: Database = Depends(get_db),
+                   settings: Settings = Depends(get_settings)) -> dict[str, str]:
+    from ..domain import members
+
+    anon = {"id": "anonymous", "name": body.name, "role": "user", "teamId": ""}
+    async with write_ctx(db, anon, settings, request.app.state.notifier) as ctx:
+        await members.register(ctx, body.model_dump())
+    return {"message": "注册申请已提交,等待 GL 或所选团队的 PL 审批;通过后会通知你,届时即可登录。"}
+
+
 @router.get("/auth/providers")
-async def providers(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+async def providers(db: Database = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
+        "selfRegistration": await _self_registration(db),
         "local": settings.local_auth_enabled,
         "demo": settings.demo,
         "sso": [{"name": p.name, "issuer": p.issuer, "enabled": p.enabled, "connected": p.issuer in PROVIDERS}

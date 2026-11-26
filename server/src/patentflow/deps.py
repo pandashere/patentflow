@@ -41,7 +41,8 @@ async def current_auth(request: Request, db: Database = Depends(get_db)) -> Auth
     if sid:
         row = await db.one(
             """SELECT s.user_id FROM sessions s JOIN users u ON u.id = s.user_id
-               WHERE s.id = ? AND s.expires_at > ? AND s.epoch = u.session_epoch AND u.deactivated_at IS NULL""",
+               WHERE s.id = ? AND s.expires_at > ? AND s.epoch = u.session_epoch
+                 AND u.deactivated_at IS NULL AND u.pending_at IS NULL""",
             (sha256(sid), now()),
         )
         if row:

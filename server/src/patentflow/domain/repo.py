@@ -20,11 +20,15 @@ def user_json(r: aiosqlite.Row, sso: set[str] | None = None, issuers: dict[str, 
         u["ssoIssuer"] = issuers[r["id"]]
     if r["deactivated_at"]:
         u["deactivated"] = {"at": r["deactivated_at"], "by": r["deactivated_by"]}
+    if r["pending_at"]:
+        u["pending"] = {"at": r["pending_at"]}
     return u
 
 
-async def load_users(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
-    async with conn.execute("SELECT * FROM users ORDER BY created_at, id") as cur:
+async def load_users(conn: aiosqlite.Connection, *, include_pending: bool = False) -> list[dict[str, Any]]:
+    """成员列表;待审批的注册默认不出现(不进人员选择器、不进统计)。"""
+    where = "" if include_pending else " WHERE pending_at IS NULL"
+    async with conn.execute(f"SELECT * FROM users{where} ORDER BY created_at, id") as cur:
         rows = await cur.fetchall()
     async with conn.execute("SELECT user_id, issuer FROM external_identities") as cur:
         ext = await cur.fetchall()

@@ -27,6 +27,8 @@ DEFAULT_SYSTEM: dict[str, Any] = {
         "due": {"owner": True, "pl": True, "gl": False},
         "transition": {"owner": True, "pl": True, "gl": True},
     },
+    # 成员管理:谁能添加新成员、审批自助注册(GL 与系统管理员始终可以)
+    "members": {"selfRegistration": True, "plCanManage": True},
     "overdue": {
         "extensionApprovalThreshold": 14,
         "freezeAdvanceOnOverdue": False,
