@@ -9,6 +9,12 @@ export const TEAMS: Team[] = [
   { id: 't3', name: '硬件系统组', plId: 'u-zhaolei' },
 ]
 
+// —— 配置文件管理员(对应 patentflow.config.yaml 的 admins 列表) ——
+// 服务端启动时读取:这些邮箱的账号保底为 GL,UI/API 均不可降级,
+// 变更只能改配置文件并重启 —— 这是防止"最后一个管理员被降级"的恢复通道。
+export const CONFIG_ADMIN_EMAILS = ['guyq@corp.local']
+export const isConfigAdmin = (email: string) => CONFIG_ADMIN_EMAILS.includes(email)
+
 export const USERS: User[] = [
   { id: 'u-chenxi', name: '陈曦', role: 'user', teamId: 't1', email: 'chenxi@corp.local', title: '高级工程师', ssoBound: true, ssoIssuer: 'corp-oidc' },
   { id: 'u-linzf', name: '林致远', role: 'pl', teamId: 't1', email: 'linzy@corp.local', title: '平台技术组 PL', ssoBound: true, ssoIssuer: 'corp-oidc' },

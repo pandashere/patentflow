@@ -1,10 +1,10 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import {
-  API_TOKENS, CONFIG, CYCLES, DEFAULT_PREFS, KPI_RULES, NOTIFICATIONS, PATENTS, TRANSITIONS, USERS, VERSIONS, teamById,
+  API_TOKENS, CONFIG, CYCLES, DEFAULT_PREFS, KPI_RULES, NOTIFICATIONS, PATENTS, TRANSITIONS, USERS, VERSIONS, isConfigAdmin, teamById,
 } from './data'
 import {
   STAGES, stageIndex, stageLabel, type ApiToken, type KpiRule, type Notification, type NotifyEvent,
-  type Cycle, type Patent, type ReviewScore, type Role, type StageExtension, type StageKey,
+  type Cycle, type Patent, type PasswordResetToken, type ReviewScore, type Role, type StageExtension, type StageKey,
   type StageNotifyConfig, type StageTransition, type StageVersion, type SystemConfig, type User, type UserPrefs,
 } from './types'
 
@@ -46,6 +46,11 @@ interface Store {
   closingRisk: (p: Patent) => 'comfortable' | 'tight' | 'doomed' | null
   loggedIn: boolean
   setLoggedIn: (v: boolean) => void
+  login: (email: string, password: string) => 'ok' | 'wrong' | 'unknown'
+  // 忘记密码:经通知接口投递一次性带 token 的重置链接;email 不存在也返回相同话术(防枚举)
+  requestPasswordReset: (email: string) => string | null // demo 直接返回链接;生产由 webhook/邮件适配器投递
+  resetPassword: (token: string, newPassword: string) => 'ok' | 'invalid' | 'expired' | 'weak'
+  changePassword: (oldPwd: string, newPwd: string) => 'ok' | 'wrong'
 
   visiblePatents: () => Patent[]
   canEditPatent: (p: Patent) => boolean // 含共同发明人:可编辑阶段内容
@@ -123,6 +128,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [prefsMap, setPrefsMap] = useState<Record<string, UserPrefs>>({})
   const [cycles, setCycles] = useState<Cycle[]>(CYCLES)
   const [snapshots, setSnapshots] = useState<KpiSnapshot[]>([])
+  const [resetTokens, setResetTokens] = useState<PasswordResetToken[]>([])
   const [loggedIn, setLoggedIn] = useState(false)
 
   const persona = PERSONAS.find((p) => p.key === personaKey)!
@@ -209,6 +215,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cycles, snapshots, activeCycle, cycleOfPatent, stageOverdueDays, closingRisk,
     patents, versions, transitions, kpiRules, notifications, config,
     loggedIn, setLoggedIn,
+
+    // 登录:已设密码的账号必须校验;未设密码的种子账号任意输入可进(演示)
+    login: (email, password) => {
+      const u = users.find((x) => x.email === email.trim())
+      if (!u) return 'unknown'
+      if (u.password && u.password !== password) return 'wrong'
+      setLoggedIn(true)
+      return 'ok'
+    },
+
+    // 忘记密码:生成一次性 token(30 分钟),经通知接口投递带 token 的链接
+    requestPasswordReset: (email) => {
+      const u = users.find((x) => x.email === email.trim())
+      if (!u) return null // 不泄露账号是否存在
+      const token = `prt_${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`
+      setResetTokens((ts) => [
+        ...ts,
+        {
+          token, userId: u.id, createdAt: now(),
+          expiresAt: new Date(Date.now() + 30 * 60000).toISOString(), used: false,
+        },
+      ])
+      return `${window.location.origin}/reset?token=${token}`
+    },
+
+    resetPassword: (token, newPassword) => {
+      const t = resetTokens.find((x) => x.token === token)
+      if (!t || t.used) return 'invalid'
+      if (Date.parse(t.expiresAt) < Date.now()) return 'expired'
+      if (newPassword.length < 8) return 'weak'
+      setResetTokens((ts) => ts.map((x) => (x.token === token ? { ...x, used: true } : x)))
+      setUsers((us) => us.map((u) => (u.id === t.userId ? { ...u, password: newPassword } : u)))
+      return 'ok'
+    },
+
+    changePassword: (oldPwd, newPwd) => {
+      if (me.password && me.password !== oldPwd) return 'wrong'
+      setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, password: newPwd } : u)))
+      return 'ok'
+    },
     visiblePatents: () => patents.filter(canSeePatent),
     canEditPatent, canOperatePatent, isReviewerOf, reviewPassCount, reviewGateOpen,
 
@@ -440,7 +486,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ]),
 
     updateMember: (id, patch) =>
-      setUsers((us) => us.map((u) => (u.id === id ? { ...u, ...patch } : u))),
+      setUsers((us) => us.map((u) => {
+        // 配置文件管理员保护:不允许通过 UI/API 降级(对应后端的硬校验)
+        if (u.id === id && isConfigAdmin(u.email) && patch.role && patch.role !== 'gl') return u
+        return u.id === id ? { ...u, ...patch } : u
+      })),
 
     updateProfile: (patch) =>
       setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, ...patch } : u))),

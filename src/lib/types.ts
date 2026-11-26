@@ -14,6 +14,16 @@ export interface User {
   title: string
   ssoBound: boolean
   ssoIssuer?: string
+  password?: string // 种子用户未设密码(演示环境任意输入可登录);重置/修改后即参与校验
+}
+
+// —— 密码重置 token:一次性、限时(默认 30 分钟),经通知接口投递带 token 的链接 ——
+export interface PasswordResetToken {
+  token: string
+  userId: string
+  createdAt: string
+  expiresAt: string
+  used: boolean
 }
 
 export interface Team {

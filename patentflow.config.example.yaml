@@ -1,0 +1,49 @@
+# PATENTFLOW 部署配置(后端启动时读取,改动需重启生效)
+# 只放「部署层」配置;审查门禁、阶段默认周期、逾期策略、KPI 等业务配置
+# 由 GL 在 UI 修改,存数据库,即时生效。
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+database:
+  # SQLite 单文件即可支撑几十人团队;后续可平滑迁移 PostgreSQL
+  url: sqlite:///./patentflow.db
+
+# —— 引导管理员(bootstrap admin) ——
+# 首次部署库里没有任何用户,第一个 GL 只能从这里产生:
+# 启动时这些邮箱的账号保底为 GL(不存在则建号,SSO 首登命中也直接是 GL)。
+# 配置文件指定的 admin 受保护:API 拒绝降级,防止最后一个管理员被锁在门外。
+# 变更本列表后重启服务生效 —— 这也是管理员权限的故障恢复通道。
+admins:
+  - guyq@corp.local
+
+auth:
+  # 本地账密(演示/兜底);SSO 走 IdentityProvider 接口,新增 issuer 即接入
+  local_enabled: true
+  session_ttl_hours: 12
+  reset_token_ttl_minutes: 30            # 忘记密码:一次性重置 token 有效期
+  sso_providers:
+    - name: 企业统一认证 (OIDC)
+      issuer: corp-oidc
+      enabled: true
+      client_id: ${OIDC_CLIENT_ID}      # 从环境变量注入,不落库不入库
+      client_secret: ${OIDC_CLIENT_SECRET}
+    - name: LDAP 域账号
+      issuer: ldap
+      enabled: false
+
+notify:
+  webhook_url: ""                        # 通知事件 POST + 签名头回调
+  auto_nudge: off                        # 逾期自动催办节奏:off | 3d | 7d
+
+overdue:
+  extension_approval_threshold: 14       # 单次延期 ≤ 该天数自动生效,否则需 PL/GL 批准
+  freeze_advance_on_overdue: false       # 阶段逾期时是否冻结推进
+
+kpi:
+  include_cross_cycle: true              # 跨周期标记专利是否计入 KPI
+
+security:
+  token_ttl_days_max: 90                 # 个人 API Token 最长有效期
+  cors_origins: []                       # 内网部署通常为空(同源)

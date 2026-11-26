@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useStore, teamName } from '@/lib/store'
-import { TEAMS } from '@/lib/data'
+import { TEAMS, isConfigAdmin } from '@/lib/data'
 import {
   NOTIFY_EVENT_LABEL, ROLE_LABEL, STAGES,
   type NotifyEvent, type Role,
@@ -159,11 +159,21 @@ export default function Admin() {
                     <td className="px-4 py-3">
                       <span className="font-medium">{u.name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">{u.title}</span>
+                      {isConfigAdmin(u.email) && (
+                        <span
+                          className="ml-2 rounded bg-[#12141f] px-1.5 py-px text-[10px] font-medium text-teal-400"
+                          title="由 patentflow.config.yaml 的 admins 指定,只能通过修改配置文件并重启来变更"
+                        >
+                          配置文件管理员
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {isGl ? (
                         <select
                           value={u.role}
+                          disabled={isConfigAdmin(u.email)}
+                          title={isConfigAdmin(u.email) ? '配置文件管理员不可在 UI 中降级' : undefined}
                           onChange={(e) => updateMember(u.id, { role: e.target.value as Role })}
                           className={cn(inputCls, 'py-1 text-xs')}
                           aria-label={`${u.name} 的角色`}
@@ -230,6 +240,49 @@ export default function Admin() {
         <p className="mt-2 text-xs text-muted-foreground">
           Reviewer 不是行政角色,不在此表维护 —— 它以「按专利邀请」的方式存在(见 review_assignment)。
           专利负责人变更在专利详情页操作(负责人/本组 PL/GL)。
+          标记「配置文件管理员」的账号由 patentflow.config.yaml 的 admins 指定,UI 中不可降级。
+        </p>
+      </section>
+
+      {/* 权限矩阵 */}
+      <section>
+        <h3 className="mb-3 text-sm font-semibold">权限矩阵(后端强制校验,前端仅显隐)</h3>
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-slate-50/70 text-left">
+                <th className="px-4 py-2.5 ui-label text-slate-500">能力</th>
+                <th className="px-4 py-2.5 ui-label text-slate-500">普通用户</th>
+                <th className="px-4 py-2.5 ui-label text-slate-500">PL</th>
+                <th className="px-4 py-2.5 ui-label text-slate-500">GL</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y text-[13px]">
+              {([
+                ['新建专利 / 编辑本人的专利内容', '本人', '本人', '本人'],
+                ['推进 / 回退 / 归档 / 转让 / 申请延期', '本人专利', '本组成员专利', '全部(非私有)'],
+                ['查看团队可见专利', '同组', '本组', '全部'],
+                ['查看私有专利', '仅本人', '不可见', '不可见'],
+                ['可专利性审查打分', '被邀请时', '被邀请时', '被邀请时'],
+                ['KPI 规则管理', '—', '本组规则', '全局规则'],
+                ['专利周期 / 逾期策略 / 审查门禁等系统配置', '—', '只读', '可编辑'],
+                ['成员与角色管理', '—', '本组只读', '可编辑(配置文件管理员除外)'],
+                ['跨周期标记 / Token 全局吊销 / 数据导出', '—', '—', '可操作'],
+                ['配置文件管理员指定', '—', '—', '仅 patentflow.config.yaml'],
+              ] as [string, string, string, string][]).map(([cap, u, pl, gl]) => (
+                <tr key={cap}>
+                  <td className="px-4 py-2.5 font-medium">{cap}</td>
+                  <td className={cn('px-4 py-2.5', u === '—' ? 'text-slate-300' : 'text-slate-600')}>{u}</td>
+                  <td className={cn('px-4 py-2.5', pl === '—' ? 'text-slate-300' : 'text-slate-600')}>{pl}</td>
+                  <td className={cn('px-4 py-2.5', gl === '—' ? 'text-slate-300' : 'text-slate-600')}>{gl}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          共同发明人可编辑内容但不可操作;reviewer 仅对被邀请专利有审查打分权。
+          后端每个写接口以 FastAPI 依赖注入重做以上校验,前端隐藏按钮只是体验层。
         </p>
       </section>
 
@@ -568,6 +621,11 @@ export default function Admin() {
               onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
               className={cn(inputCls, 'w-full max-w-sm font-mono-x text-xs')}
             />
+          </div>
+          <div className="rounded-md border border-dashed bg-slate-50/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-600">
+            <strong>账号安全事件</strong>(忘记密码的重置链接)经同一 webhook 回调投递,由邮件/IM 适配器送达本人:
+            <strong>强制送达</strong>,不受个人订阅与免打扰影响;链接带一次性 token,30 分钟有效、用后作废;
+            无论账号是否存在都返回相同话术,不泄露注册状态。
           </div>
         </div>
       </section>

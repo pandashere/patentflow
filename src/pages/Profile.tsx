@@ -24,7 +24,7 @@ function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; labe
 }
 
 export default function Profile() {
-  const { me, prefs, savePrefs, updateProfile, tokens, createToken, revokeToken } = useStore()
+  const { me, prefs, savePrefs, updateProfile, tokens, createToken, revokeToken, changePassword } = useStore()
   const [name, setName] = useState(me.name)
   const [email, setEmail] = useState(me.email)
   const [saved, setSaved] = useState(false)
@@ -101,7 +101,8 @@ export default function Profile() {
                 onClick={() => {
                   if (pwd.n1.length < 8) setPwdMsg({ ok: false, text: '新密码至少 8 位' })
                   else if (pwd.n1 !== pwd.n2) setPwdMsg({ ok: false, text: '两次输入的新密码不一致' })
-                  else { setPwdMsg({ ok: true, text: '密码已更新(demo 环境仅本地校验)' }); setPwd({ old: '', n1: '', n2: '' }) }
+                  else if (changePassword(pwd.old, pwd.n1) === 'wrong') setPwdMsg({ ok: false, text: '当前密码不正确' })
+                  else { setPwdMsg({ ok: true, text: '密码已更新,下次登录生效' }); setPwd({ old: '', n1: '', n2: '' }) }
                 }}
                 className="rounded-md border px-4 py-2 text-[13px] font-medium hover:bg-slate-50 disabled:opacity-40"
               >
