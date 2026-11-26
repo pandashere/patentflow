@@ -4,7 +4,8 @@ from fastapi import FastAPI
 
 
 def register_routers(app: FastAPI) -> None:
-    from . import auth, patents
+    from . import auth, patents, planning
 
     app.include_router(auth.router, prefix="/api")
     app.include_router(patents.router, prefix="/api")
+    app.include_router(planning.router, prefix="/api")
