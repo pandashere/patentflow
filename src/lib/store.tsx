@@ -173,7 +173,8 @@ interface Store {
   declineReview: (patentId: string, reason: string) => Promise<void>
   startNewRound: (patentId: string) => Promise<void>
   submitReview: (patentId: string, score: ReviewScore) => Promise<'ok' | 'below-min' | 'error'>
-  saveNotifyConfig: (patentId: string, cfgs: StageNotifyConfig[]) => Promise<void>
+  // 只提交本次改动的阶段(upsert)与恢复默认的阶段(remove),由后端合并
+  saveNotifyConfig: (patentId: string, upsert: StageNotifyConfig[], remove: StageKey[]) => Promise<void>
   createPatent: (title: string, visibility: Patent['visibility']) => Promise<string | null>
   setVisibility: (patentId: string, v: Patent['visibility']) => Promise<void>
   archive: (patentId: string, kind: 'completed' | 'abandoned', reason: string) => Promise<void>
@@ -207,7 +208,7 @@ interface Store {
   closeCycle: (id: string) => Promise<void>
   requestExtension: (patentId: string, newDue: string, reason: string) => Promise<ExtResult>
   reviewExtension: (patentId: string, extId: string, approve: boolean) => Promise<void>
-  nudge: (patentId: string) => Promise<void>
+  nudge: (patentId: string) => Promise<boolean> // 服务端确认成功才返回 true
   toggleCrossCycle: (patentId: string) => Promise<void>
   createToken: (name: string, days: number, scope: ApiToken['scope']) => Promise<string | null>
   revokeToken: (id: string) => Promise<void>
@@ -469,7 +470,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return 'error'
       }
     },
-    saveNotifyConfig: async (pid, cfgs) => { await act(() => api.put(`${P(pid)}/notification-settings`, cfgs)) },
+    saveNotifyConfig: async (pid, upsert, remove) => {
+      await act(() => api.patch(`${P(pid)}/notification-settings`, { upsert, remove }))
+    },
     createPatent: async (title, visibility) =>
       (await act(() => api.post<Patent>('/patents', { title, visibility })))?.id ?? null,
     setVisibility: async (pid, v) => { await act(() => api.patch(`${P(pid)}/visibility`, { visibility: v })) },
@@ -493,7 +496,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     reactivateMember: async (uid) => { await act(() => api.post(`/users/${uid}/reactivate`)) },
     migrateTeam: async (pid, teamId) => { await act(() => api.post(`${P(pid)}/team`, { teamId })) },
-    deletePatent: async (pid) => (await act(() => api.del(P(pid)))) !== undefined,
+    deletePatent: async (pid) => {
+      const rev = patents.find((p) => p.id === pid)?.rev
+      return (await act(() => api.del(`${P(pid)}${rev !== undefined ? `?rev=${rev}` : ''}`))) !== undefined
+    },
     setCollaborators: async (pid, ids) => {
       const rev = patents.find((p) => p.id === pid)?.rev
       await act(() => api.put(`${P(pid)}/collaborators`, { userIds: ids, rev }))
@@ -572,7 +578,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await act(() => api.post(`${P(pid)}/extensions/${eid}/${approve ? 'approve' : 'reject'}`))
     },
     nudge: async (pid) => {
-      if ((await act(() => api.post(`${P(pid)}/nudge`))) !== undefined) setNotice('已催办,负责人与共同发明人会收到通知')
+      const ok = (await act(() => api.post(`${P(pid)}/nudge`))) !== undefined
+      if (ok) setNotice('已催办,负责人与共同发明人会收到通知')
+      return ok
     },
     toggleCrossCycle: async (pid) => { await act(() => api.post(`${P(pid)}/cross-cycle`)) },
     createToken: async (name, days, scope) =>

@@ -493,7 +493,9 @@ function MyContribution() {
                       {it.achievedTargets.filter(Boolean).length}/{r.targets.length}
                     </span>
                     {next ? (
-                      reachedAt && cycle && reachedAt < cycle.start
+                      cycle?.status === 'closed'
+                        ? <span className="text-slate-500">周期已于 {cycle.closedAt?.slice(0, 10) ?? cycle.end} 收口,收口时未达成「{stageLabel(next.stage)}」</span>
+                        : reachedAt && cycle && reachedAt < cycle.start
                         ? <span className="text-slate-500">「{stageLabel(next.stage)}」已在往期周期到达,本周期不重复计</span>
                         : reachedAt
                           ? <span className="text-slate-500">{reachedAt} 才到达「{stageLabel(next.stage)}」,晚于截止 {next.deadline}</span>

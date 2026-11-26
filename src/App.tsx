@@ -30,8 +30,9 @@ function Shell() {
   if (!loggedIn || resetMode) return <Login onResetDone={() => { setResetMode(false); refresh() }} />
 
   return (
-    <AppShell page={page} navigate={setPage}>
-      {page.name === 'dashboard' && <Dashboard navigate={setPage} />}
+    // 切换页面时向服务端刷新(新邀请、新通知、可见性变化);同页内的编辑表单不受影响
+    <AppShell page={page} navigate={(p) => { setPage(p); refresh() }}>
+      {page.name === 'dashboard' && <Dashboard navigate={(p) => { setPage(p); refresh() }} />}
       {page.name === 'patents' && <PatentList key={page.stage ?? 'all'} navigate={setPage} initialStage={page.stage} />}
       {page.name === 'patent' && <PatentDetail id={page.id} navigate={setPage} />}
       {page.name === 'kpi' && <Kpi />}

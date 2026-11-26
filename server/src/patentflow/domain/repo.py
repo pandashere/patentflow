@@ -84,6 +84,7 @@ async def load_patents(conn: aiosqlite.Connection, ids: Iterable[str] | None = N
             data[r["patent_id"]][r["stage"]] = loads(r["data"])
 
     current_round = {r["id"]: r["review_round"] for r in rows}
+    in_review = {r["id"] for r in rows if r["stage"] == "patentability" and not r["archived"]}
     async with conn.execute(
         f"SELECT * FROM review_assignments WHERE patent_id IN ({ph}) ORDER BY invited_at, user_id", pids
     ) as cur:
@@ -92,7 +93,8 @@ async def load_patents(conn: aiosqlite.Connection, ids: Iterable[str] | None = N
         active_reviewers: dict[str, set[str]] = defaultdict(set)
         for r in await cur.fetchall():
             assigns[(r["patent_id"], r["round"])].append(_assignment(r))
-            if r["round"] == current_round[r["patent_id"]] and not r["declined_at"]:
+            # 只在审查阶段有效:审查结束(推进 / 归档)后,外组 reviewer 不再能读取后续材料
+            if r["patent_id"] in in_review and r["round"] == current_round[r["patent_id"]] and not r["declined_at"]:
                 active_reviewers[r["patent_id"]].add(r["user_id"])
 
     async with conn.execute(f"SELECT * FROM review_rounds WHERE patent_id IN ({ph}) ORDER BY round", pids) as cur:

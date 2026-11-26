@@ -14,6 +14,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
   const {
     me, persona, visiblePatents, kpiRules, patents, transitions, userById, cycles, activeCycle,
     stageOverdueDays, closingRisk, reviewExtension, reviewRejected, canOperatePatent, kpiReport, pendingRegistrations,
+    cycleOfPatent,
   } = useStore()
   const visible = visiblePatents()
   const active = visible.filter((p) => !p.archived) // 归档专利退出流水线视图
@@ -33,6 +34,12 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
     overdueRows.filter((r) => r.days >= 15),
   ]
   const riskRows = active.map((p) => ({ p, risk: closingRisk(p) })).filter((r) => r.risk)
+  const canNudge = (p: Patent) => (me.role === 'gl' || (me.role === 'pl' && p.teamId === me.teamId)) && p.ownerId !== me.id
+  // 决策 19:所属周期已收口、未完成且未获跨周期豁免的专利转入逾期管理(PL 只看本组)
+  const closedUnfinished = active.filter((p) => {
+    const c = cycleOfPatent(p)
+    return c?.status === 'closed' && !p.crossCycle && (me.role === 'gl' || p.teamId === me.teamId)
+  })
   const doomed = riskRows.filter((r) => r.risk === 'doomed')
   const tightCount = riskRows.filter((r) => r.risk === 'tight').length
   const cycleDaysLeft = cycle ? Math.max(0, daysBetween(today(), cycle.end)) : null
@@ -253,7 +260,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                       <td className="pr-3 font-medium text-red-600">{days} 天</td>
                       <td className="pr-3 text-xs text-muted-foreground">{lastActivity(p.id)}</td>
                       <td className="pr-3 text-right">
-                        <NudgeButton patentId={p.id} />
+                        {canNudge(p) && <NudgeButton patentId={p.id} />}
                       </td>
                     </tr>
                   ))}
@@ -261,6 +268,27 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
               </table>
             ) : (
               <div className="text-sm text-muted-foreground">当前没有逾期专利。</div>
+            )}
+
+            {closedUnfinished.length > 0 && (
+              <div className="border-t pt-3">
+                <div className="mb-2 text-xs font-medium text-muted-foreground">
+                  所属周期已收口、仍未完成({closedUnfinished.length})—— 可推进收尾、归档,或由 GL 标记跨周期
+                </div>
+                <div className="space-y-1.5">
+                  {closedUnfinished.map((p) => (
+                    <div key={p.id} className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs">
+                      <button type="button" className="font-medium hover:underline" onClick={() => navigate({ name: 'patent', id: p.id })}>
+                        {p.title}
+                      </button>
+                      <span className="text-muted-foreground">
+                        {stageLabel(p.stage)} · {cycleOfPatent(p)?.name} 已收口 · {userById(p.ownerId).name}
+                      </span>
+                      {canNudge(p) && <span className="ml-auto"><NudgeButton patentId={p.id} /></span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             <div className="border-t pt-3">
@@ -492,7 +520,7 @@ function NudgeButton({ patentId }: { patentId: string }) {
     <button
       type="button"
       disabled={sent}
-      onClick={async (e) => { e.stopPropagation(); await nudge(patentId); setSent(true) }}
+      onClick={async (e) => { e.stopPropagation(); if (await nudge(patentId)) setSent(true) }}
       className="rounded border px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:border-transparent disabled:text-teal-700"
     >
       {sent ? '已催办' : '催办'}

@@ -37,7 +37,7 @@ export function AppShell({
   navigate: (p: Page) => void
   children: ReactNode
 }) {
-  const { me, persona, setPersona, notifications, markAllRead, logout, visiblePatents, providers } = useStore()
+  const { me, persona, setPersona, notifications, markAllRead, logout, visiblePatents, providers, refresh } = useStore()
   const [notifOpen, setNotifOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
   // 个人通知偏好(U3):被关掉的事件不进入通知流
@@ -96,7 +96,7 @@ export function AppShell({
           <div className="relative">
             <button
               type="button"
-              onClick={() => { setNotifOpen((v) => !v); setPersonaOpen(false) }}
+              onClick={() => { if (!notifOpen) refresh(); setNotifOpen((v) => !v); setPersonaOpen(false) }}
               className="relative flex size-9 items-center justify-center rounded-md border text-slate-600 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
               aria-label="通知"
             >

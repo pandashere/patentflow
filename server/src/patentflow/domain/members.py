@@ -303,7 +303,10 @@ async def deactivate(ctx: Ctx, uid: str, assignments: dict[str, str]) -> dict[st
         if to:
             await check_recipient(to)
         target = to or await fallback_for(p["teamId"])
+        # 决策 15 / 29:原负责人保留为共同发明人(历史署名),与普通转交一致
         collab = [c for c in p["collaborators"] if c != target]
+        if uid not in collab:
+            collab.append(uid)
         cols: dict[str, Any] = {"owner_id": target, "collaborators": collab}
         if p["visibility"] == "private":
             cols["visibility"] = "team"

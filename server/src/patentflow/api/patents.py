@@ -219,7 +219,20 @@ async def collaborators(pid: str, body: IdsIn, request: Request, auth: Auth = De
 @router.put("/patents/{pid}/notification-settings")
 async def notification_settings(pid: str, body: list[dict[str, Any]], request: Request,
                                 auth: Auth = Depends(current_auth)) -> dict[str, Any]:
+    """整表替换(兼容旧客户端)。网页端使用 PATCH 按阶段合并。"""
     await run(request, auth, lambda ctx: patents.save_notify(ctx, pid, body))
+    return await patent_out(request, pid)  # type: ignore[return-value]
+
+
+class NotifyPatchIn(BaseModel):
+    upsert: list[dict[str, Any]] = Field(default_factory=list)  # 本次改动的阶段
+    remove: list[str] = Field(default_factory=list)  # 恢复全局默认的阶段
+
+
+@router.patch("/patents/{pid}/notification-settings")
+async def patch_notification_settings(pid: str, body: NotifyPatchIn, request: Request,
+                                      auth: Auth = Depends(current_auth)) -> dict[str, Any]:
+    await run(request, auth, lambda ctx: patents.save_notify(ctx, pid, body.upsert, body.remove, merge=True))
     return await patent_out(request, pid)  # type: ignore[return-value]
 
 
@@ -252,8 +265,9 @@ async def migrate(pid: str, body: TeamIn, request: Request, auth: Auth = Depends
 
 
 @router.delete("/patents/{pid}")
-async def delete(pid: str, request: Request, auth: Auth = Depends(current_auth)) -> dict[str, bool]:
-    await run(request, auth, lambda ctx: patents.delete(ctx, pid))
+async def delete(pid: str, request: Request, rev: int | None = None,
+                 auth: Auth = Depends(current_auth)) -> dict[str, bool]:
+    await run(request, auth, lambda ctx: patents.delete(ctx, pid, rev))
     return {"ok": True}
 
 

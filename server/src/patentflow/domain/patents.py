@@ -231,7 +231,10 @@ async def set_collaborators(ctx: Ctx, pid: str, ids: list[str], rev: int | None 
     await bump(ctx, pid, rev, collaborators=clean)
 
 
-async def save_notify(ctx: Ctx, pid: str, cfgs: list[dict[str, Any]]) -> None:
+async def save_notify(ctx: Ctx, pid: str, cfgs: list[dict[str, Any]],
+                      remove: list[str] | None = None, merge: bool = False) -> None:
+    """merge=True:只增改 cfgs 中出现的阶段、删除 remove 中的阶段,其余阶段保持(防止两人各改一阶段互相覆盖);
+    merge=False:整表替换(保持 API 兼容)。"""
     p = await get_visible(ctx, pid)
     if not access.can_edit(ctx.me, p):
         raise forbidden()
@@ -246,6 +249,9 @@ async def save_notify(ctx: Ctx, pid: str, cfgs: list[dict[str, Any]]) -> None:
             "includeOwner": bool(c.get("includeOwner")),
             "events": [e for e in c.get("events", []) if e in ("review", "due", "transition")],
         })
+    if merge:
+        touched = {c["stage"] for c in clean} | set(remove or [])
+        clean = [n for n in p["notify"] if n["stage"] not in touched] + clean
     await bump(ctx, pid, notify=clean)
 
 
@@ -297,14 +303,16 @@ async def migrate_team(ctx: Ctx, pid: str, team_id: str) -> None:
 
 
 async def can_delete(ctx: Ctx, p: dict[str, Any]) -> bool:
-    if p["ownerId"] != ctx.me["id"] or await has_left_draft(ctx.conn, p):
+    if p["ownerId"] != ctx.me["id"] or p["archived"] or await has_left_draft(ctx.conn, p):
         return False
     async with ctx.conn.execute("SELECT 1 FROM review_assignments WHERE patent_id = ? LIMIT 1", (p["id"],)) as cur:
         return await cur.fetchone() is None
 
 
-async def delete(ctx: Ctx, pid: str) -> None:
+async def delete(ctx: Ctx, pid: str, rev: int | None = None) -> None:
     p = await get_visible(ctx, pid)
+    if rev is not None and rev != p["rev"]:
+        raise conflict("该专利刚被他人修改(例如已归档),页面已刷新,请确认后再操作", reason="stale_rev")
     if not await can_delete(ctx, p):
-        raise forbidden("只有负责人可以删除从未离开草案、且从未邀请过 reviewer 的专利")
+        raise forbidden("只有负责人可以删除从未离开草案、未归档、且从未邀请过 reviewer 的专利")
     await ctx.conn.execute("DELETE FROM patents WHERE id = ?", (pid,))

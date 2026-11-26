@@ -818,14 +818,18 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
 
   // 只有改动过(或原本就有覆盖)的阶段才保存为专利级覆盖;其余阶段继续沿用 GL 的全局默认收件人
   const [overridden, setOverridden] = useState<Set<StageKey>>(() => new Set(patent.notify.map((n) => n.stage)))
+  // 本次会话实际改动 / 恢复默认的阶段:保存时只提交这些,避免覆盖他人对其他阶段的修改
+  const [edited, setEdited] = useState<Set<StageKey>>(() => new Set())
   const update = (stage: StageKey, patch: Partial<StageNotifyConfig>) => {
     setPv(null) // 配置变了,旧的预演结果作废
     setOverridden((s) => new Set(s).add(stage))
+    setEdited((s) => new Set(s).add(stage))
     setCfgs((cs) => cs.map((c) => (c.stage === stage ? { ...c, ...patch } : c)))
   }
   const resetStage = (stage: StageKey) => {
     setPv(null)
     setOverridden((s) => { const n = new Set(s); n.delete(stage); return n })
+    setEdited((s) => new Set(s).add(stage))
   }
   const effective = cfgs.filter((c) => overridden.has(c.stage))
 
@@ -969,7 +973,14 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
           </button>
           <button
             type="button"
-            onClick={() => { saveNotifyConfig(patentId, effective); onClose() }}
+            onClick={() => {
+              saveNotifyConfig(
+                patentId,
+                effective.filter((c) => edited.has(c.stage)),
+                [...edited].filter((s) => !overridden.has(s)),
+              )
+              onClose()
+            }}
             className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
           >
             保存配置
