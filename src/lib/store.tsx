@@ -58,18 +58,30 @@ interface Store {
   isReviewerOf: (p: Patent) => boolean
   reviewPassCount: (p: Patent) => number
   reviewGateOpen: (p: Patent) => boolean
+  reviewRejected: (p: Patent) => boolean // 当前轮存在打回
+  hasLeftDraft: (p: Patent) => boolean // 是否离开过草案(决定能否再设为私有)
+  canDeletePatent: (p: Patent) => boolean
+  activeUsers: User[]
 
   saveStageData: (patentId: string, stage: StageKey, data: unknown, note: string) => void
   advance: (patentId: string, reason: string) => void
   rollback: (patentId: string, to: StageKey, reason: string) => void
   inviteReviewer: (patentId: string, userId: string) => void
+  withdrawReviewer: (patentId: string, userId: string) => void
+  declineReview: (patentId: string, reason: string) => void
+  startNewRound: (patentId: string) => void
   submitReview: (patentId: string, score: ReviewScore) => 'ok' | 'below-min'
   saveNotifyConfig: (patentId: string, cfgs: StageNotifyConfig[]) => void
   createPatent: (title: string, visibility: Patent['visibility']) => string
   setVisibility: (patentId: string, v: Patent['visibility']) => void
   archive: (patentId: string, kind: 'completed' | 'abandoned', reason: string) => void
   unarchive: (patentId: string, reason: string) => void
-  transferOwnership: (patentId: string, newOwnerId: string) => void
+  transferOwnership: (patentId: string, newOwnerId: string, keepAsCollaborator?: boolean) => void
+  batchTransfer: (items: { patentId: string; toUserId: string }[], keepAsCollaborator?: boolean) => void
+  deactivateMember: (userId: string, assignments: Record<string, string>) => 'ok' | 'unassigned'
+  reactivateMember: (userId: string) => void
+  migrateTeam: (patentId: string, teamId: string) => void
+  deletePatent: (patentId: string) => boolean
   setCollaborators: (patentId: string, ids: string[]) => void
   saveKpiRule: (rule: KpiRule) => void
   toggleKpiRule: (id: string) => void
@@ -84,7 +96,7 @@ interface Store {
   reviewExtension: (patentId: string, extId: string, approve: boolean) => void
   nudge: (patentId: string) => void
   toggleCrossCycle: (patentId: string) => void
-  createToken: (name: string, days: number) => string
+  createToken: (name: string, days: number, scope: ApiToken['scope']) => string
   revokeToken: (id: string) => void
   adminRevokeToken: (id: string) => void
   markAllRead: () => void
@@ -99,9 +111,17 @@ export function useStore() {
   return s
 }
 
-const now = () => new Date().toISOString().slice(0, 16).replace('T', ' ')
-const today = () => new Date().toISOString().slice(0, 10)
-const addDays = (from: string, days: number) => {
+// 日期一律按本地(服务器配置)时区:toISOString 是 UTC,在 UTC+8 的 0–8 点会差一天
+const pad = (n: number) => String(n).padStart(2, '0')
+const fmtDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+export const now = () => {
+  const d = new Date()
+  return `${fmtDate(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+export const today = () => fmtDate(new Date())
+export const daysBetween = (from: string, to: string) =>
+  Math.round((Date.parse(`${to}T00:00:00`) - Date.parse(`${from}T00:00:00`)) / 86400000)
+export const addDays = (from: string, days: number) => {
   const d = new Date(`${from}T00:00:00`)
   d.setDate(d.getDate() + days)
   // 本地时区格式化,避免 toISOString 的 UTC 偏移导致日期差一天
@@ -150,14 +170,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (p.archived) return 0
     const due = p.dueDates[p.stage]
     if (!due) return 0
-    return Math.max(0, Math.floor((Date.parse(today()) - Date.parse(due)) / 86400000))
+    return Math.max(0, daysBetween(due, today()))
   }
 
   // 收口风险:周期剩余天数 vs 当前及之后各阶段默认预算之和
   const closingRisk = (p: Patent): 'comfortable' | 'tight' | 'doomed' | null => {
     const c = cycleOfPatent(p)
     if (!c || c.status !== 'active' || p.archived || p.crossCycle) return null
-    const remaining = Math.floor((Date.parse(c.end) - Date.parse(today())) / 86400000)
+    const remaining = daysBetween(today(), c.end)
     if (remaining < 0) return 'doomed'
     const budget = STAGES.slice(stageIndex(p.stage)).reduce((a, s) => a + config.stageDefaults[s.key], 0)
     if (remaining >= budget + 7) return 'comfortable'
@@ -192,12 +212,60 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const qualifiedPass = (s: ReviewScore | null) =>
     s?.verdict === 'pass' && weightedScore(s, config) >= config.reviewMinWeighted
 
+  // 门禁只统计当前轮次、未拒绝邀请的 reviewer
   const reviewPassCount = (p: Patent) =>
-    p.stageData.patentability.reviewers.filter((r) => qualifiedPass(r.score)).length
+    p.stageData.patentability.reviewers.filter((r) => !r.declined && qualifiedPass(r.score)).length
 
-  // 决策:GL 配置至少 n 名 reviewer 通过(加权达标),且无未结打回
+  const reviewRejected = (p: Patent) =>
+    p.stageData.patentability.reviewers.some((r) => !r.declined && r.score?.verdict === 'reject')
+
+  // 决策:至少 n 名 reviewer 通过(加权达标),且本轮无打回(打回只阻断本轮,不自动回退)
   const reviewGateOpen = (p: Patent) =>
-    reviewPassCount(p) >= config.reviewPassCount
+    !reviewRejected(p) && reviewPassCount(p) >= config.reviewPassCount
+
+  const hasLeftDraft = (p: Patent) =>
+    p.stage !== 'draft' || transitions.some((t) => t.patentId === p.id && t.from === 'draft' && t.to !== 'draft')
+
+  // 删除:仅负责人、从未离开草案、从未邀请过 reviewer
+  const canDeletePatent = (p: Patent) =>
+    p.ownerId === me.id && !hasLeftDraft(p)
+    && p.stageData.patentability.reviewers.length === 0
+    && p.stageData.patentability.pastRounds.length === 0
+
+  const activeUsers = users.filter((u) => !u.deactivated)
+
+  // 进入新审查轮次:当前轮归档到 pastRounds,reviewer 名单继承并重置为待审查
+  const nextRound = (x: Patent, outcome: 'passed' | 'rejected' | 'superseded'): Patent => {
+    const rev = x.stageData.patentability
+    const submitted = rev.reviewers.some((r) => r.score || r.declined)
+    if (!submitted) return x
+    return {
+      ...x,
+      stageData: {
+        ...x.stageData,
+        patentability: {
+          ...rev,
+          round: rev.round + 1,
+          pastRounds: [...rev.pastRounds, { round: rev.round, reviewers: rev.reviewers, closedAt: now(), outcome }],
+          reviewers: rev.reviewers
+            .filter((r) => !r.declined && !users.find((u) => u.id === r.userId)?.deactivated)
+            .map((r) => ({ ...r, invitedAt: now(), dueDate: addDays(today(), config.reviewerDueDays), score: null })),
+        },
+      },
+    }
+  }
+
+  // 阶段变化时,待批的延期申请自动作废
+  const voidPendingExts = (x: Patent): Patent => ({
+    ...x,
+    extensions: x.extensions.map((e) => (e.status === 'pending' ? { ...e, status: 'void' as const } : e)),
+  })
+
+  const doTransfer = (x: Patent, newOwnerId: string, keep: boolean): Patent => ({
+    ...x,
+    ownerId: newOwnerId,
+    collaborators: [...new Set([...x.collaborators, ...(keep ? [x.ownerId] : [])])].filter((c) => c !== newOwnerId),
+  })
 
   const pushNotification = (n: Omit<Notification, 'id' | 'at' | 'read'>) =>
     setNotifications((ns) => [{ ...n, id: `n${++seq}`, at: now(), read: false }, ...ns])
@@ -219,7 +287,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // 登录:已设密码的账号必须校验;未设密码的种子账号任意输入可进(演示)
     login: (email, password) => {
       const u = users.find((x) => x.email === email.trim())
-      if (!u) return 'unknown'
+      if (!u || u.deactivated) return 'unknown'
       if (u.password && u.password !== password) return 'wrong'
       setLoggedIn(true)
       return 'ok'
@@ -257,11 +325,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     visiblePatents: () => patents.filter(canSeePatent),
     canEditPatent, canOperatePatent, isReviewerOf, reviewPassCount, reviewGateOpen,
+    reviewRejected, hasLeftDraft, canDeletePatent, activeUsers,
 
     saveStageData: (patentId, stage, data, note) => {
       setPatents((ps) =>
         ps.map((p) =>
-          p.id === patentId ? { ...p, stageData: { ...p.stageData, [stage]: data } } : p,
+          p.id === patentId
+            ? { ...p, stageData: { ...p.stageData, [stage]: data }, needsRecheck: p.needsRecheck.filter((s) => s !== stage) }
+            : p,
         ),
       )
       setVersions((vs) => {
@@ -276,16 +347,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!next) return
       setPatents((ps) => ps.map((x) => {
         if (x.id !== patentId) return x
-        // 阶段默认周期(G2):推进时自动算出新阶段 due date(已有设定则不覆盖);
+        // 阶段默认周期(G2):推进时自动算出新阶段 due date。
+        // 已有设定且未过期、且不是回退后重新进入的阶段才保留;否则按默认周期重算(避免一进入即逾期)。
         // 自定周期必须落在专利周期内:非跨周期项目按周期结束日截断
         const dueDates = { ...x.dueDates }
-        if (!dueDates[next.key]) {
+        const reentered = x.needsRecheck.includes(next.key)
+          || transitions.some((t) => t.patentId === x.id && t.kind === 'advance' && t.to === next.key)
+        const existing = dueDates[next.key]
+        if (!existing || existing < today() || reentered) {
           let due = addDays(today(), config.stageDefaults[next.key])
           const c = cycleOfPatent(x)
           if (c && !x.crossCycle && due > c.end) due = c.end
           dueDates[next.key] = due
         }
-        return { ...x, stage: next.key, dueDates }
+        let y: Patent = voidPendingExts({ ...x, stage: next.key, dueDates })
+        // 重新进入审查阶段:若上一轮已有提交,自动开启新一轮
+        if (next.key === 'patentability') y = nextRound(y, 'superseded')
+        return y
       }))
       addTransition({ patentId, from: p.stage, to: next.key, reason, kind: 'advance' })
       pushNotification({ event: 'transition', text: `《${p.title}》已推进至「${next.label}」`, patentId })
@@ -293,7 +371,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     rollback: (patentId, to, reason) => {
       const p = patents.find((x) => x.id === patentId)!
-      setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, stage: to } : x)))
+      // 多级回退:被跳过的后续阶段数据保留,标记「需复核」
+      const skipped = STAGES.slice(stageIndex(to) + 1, stageIndex(p.stage) + 1).map((s) => s.key)
+      setPatents((ps) => ps.map((x) =>
+        x.id === patentId
+          ? voidPendingExts({ ...x, stage: to, needsRecheck: [...new Set([...x.needsRecheck, ...skipped])] })
+          : x))
       addTransition({ patentId, from: p.stage, to, reason, kind: 'rollback' })
       pushNotification({
         event: 'transition',
@@ -315,13 +398,65 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               ...x.stageData,
               patentability: {
                 ...rev,
-                reviewers: [...rev.reviewers, { userId, invitedBy: me.id, invitedAt: now(), score: null }],
+                reviewers: [
+                  ...rev.reviewers,
+                  { userId, invitedBy: me.id, invitedAt: now(), dueDate: addDays(today(), config.reviewerDueDays), score: null },
+                ],
               },
             },
           }
         }),
       )
       pushNotification({ event: 'review', text: `${u.name} 被邀请审查《${p.title}》`, patentId })
+    },
+
+    // 撤销邀请:仅限尚未提交意见的 reviewer
+    withdrawReviewer: (patentId, userId) => {
+      const p = patents.find((x) => x.id === patentId)!
+      setPatents((ps) => ps.map((x) => {
+        if (x.id !== patentId) return x
+        const rev = x.stageData.patentability
+        return {
+          ...x,
+          stageData: {
+            ...x.stageData,
+            patentability: { ...rev, reviewers: rev.reviewers.filter((r) => r.userId !== userId || !!r.score) },
+          },
+        }
+      }))
+      pushNotification({ event: 'review', text: `${userById(userId).name} 对《${p.title}》的审查邀请已撤销`, patentId })
+    },
+
+    // reviewer 拒绝邀请:保留记录,不计入门禁
+    declineReview: (patentId, reason) => {
+      const p = patents.find((x) => x.id === patentId)!
+      setPatents((ps) => ps.map((x) => {
+        if (x.id !== patentId) return x
+        const rev = x.stageData.patentability
+        return {
+          ...x,
+          stageData: {
+            ...x.stageData,
+            patentability: {
+              ...rev,
+              reviewers: rev.reviewers.map((r) => (r.userId === me.id ? { ...r, declined: { at: now(), reason } } : r)),
+            },
+          },
+        }
+      }))
+      pushNotification({ event: 'review', text: `${me.name} 拒绝了《${p.title}》的审查邀请:${reason}`, patentId })
+    },
+
+    // 发明人发起新一轮审查(通常在本轮被打回、修改草案后)
+    startNewRound: (patentId) => {
+      const p = patents.find((x) => x.id === patentId)!
+      const outcome = reviewRejected(p) ? 'rejected' : 'superseded'
+      setPatents((ps) => ps.map((x) => (x.id === patentId ? nextRound(x, outcome) : x)))
+      pushNotification({
+        event: 'review',
+        text: `《${p.title}》发起第 ${p.stageData.patentability.round + 1} 轮审查,请 reviewer 重新评审`,
+        patentId,
+      })
     },
 
     submitReview: (patentId, score) => {
@@ -346,8 +481,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               },
             },
           }
-          // 任一 reviewer 打回 → 自动回退草案
-          if (score.verdict === 'reject') next.stage = 'draft'
+          // 决策:打回不自动回退,只阻断本轮门禁;由发明人修改后发起新一轮
           return next
         }),
       )
@@ -356,12 +490,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         text: `${me.name} 已提交对《${p.title}》的审查意见:${score.verdict === 'pass' ? '通过' : '打回'}`,
         patentId,
       })
-      if (score.verdict === 'reject') {
-        addTransition({
-          patentId, from: 'patentability', to: 'draft',
-          reason: `审查打回:${score.comment || '未填写意见'}`, kind: 'reject',
-        })
-      }
       return 'ok'
     },
 
@@ -395,12 +523,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })(),
         stageData: {
           draft: { background: '', classification: '', idea: '' },
-          patentability: { summary: '', selfAssessment: emptyScore, reviewers: [] },
+          patentability: { summary: '', selfAssessment: emptyScore, round: 1, reviewers: [], pastRounds: [] },
           implementation: { markdown: '' },
           search: { markdown: '' },
           doi: { title: '', authors: '', venue: '', abstractDraft: '' },
         },
         notify: [],
+        needsRecheck: [],
         archived: null,
       }
       setPatents((ps) => [p, ...ps])
@@ -411,7 +540,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // 可见性约束:仅 draft 阶段可以改为私有(私有专利只能停留在草案)
     setVisibility: (patentId, v) => {
       const p = patents.find((x) => x.id === patentId)!
-      if (v === 'private' && p.stage !== 'draft') return
+      // 离开过草案(含被回退回草案)的专利不可再设为私有:其流转、审查、KPI 记录已对他人可见
+      if (v === 'private' && hasLeftDraft(p)) return
       setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, visibility: v } : x)))
       pushNotification({
         event: 'transition',
@@ -430,7 +560,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ),
       )
       addTransition({
-        patentId, from: p.stage, to: p.stage, kind: 'rollback',
+        patentId, from: p.stage, to: p.stage, kind: 'archive',
         reason: `${kind === 'completed' ? '完成归档' : '放弃归档'}:${reason}`,
       })
       pushNotification({
@@ -443,7 +573,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     unarchive: (patentId, reason) => {
       const p = patents.find((x) => x.id === patentId)!
       setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, archived: null } : x)))
-      addTransition({ patentId, from: p.stage, to: p.stage, kind: 'advance', reason: `恢复归档:${reason}` })
+      addTransition({ patentId, from: p.stage, to: p.stage, kind: 'unarchive', reason: `恢复归档:${reason}` })
       pushNotification({ event: 'transition', text: `《${p.title}》已恢复到「${stageLabel(p.stage)}」`, patentId })
     },
 
@@ -457,23 +587,72 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     toggleKpiRule: (id) =>
       setKpiRules((rs) => rs.map((r) => (r.id === id ? { ...r, enabled: !r.enabled, updatedAt: now() } : r))),
 
-    transferOwnership: (patentId, newOwnerId) => {
+    // 专利转交:接收人成为负责人;原负责人默认转为共同发明人(可选择不保留)。
+    // 私有专利转交后仍为私有,仅新负责人(及保留的原负责人)可见;团队归属不变(换组决策:专利留在原组)
+    transferOwnership: (patentId, newOwnerId, keepAsCollaborator = true) => {
       const p = patents.find((x) => x.id === patentId)!
       const from = userById(p.ownerId).name
       const to = userById(newOwnerId).name
-      setPatents((ps) =>
-        ps.map((x) =>
-          x.id === patentId
-            ? {
-                ...x,
-                ownerId: newOwnerId,
-                // 原负责人保留为共同发明人,避免历史作者失去访问权
-                collaborators: [...new Set([...x.collaborators, p.ownerId])].filter((c) => c !== newOwnerId),
-              }
-            : x,
-        ),
-      )
-      pushNotification({ event: 'transition', text: `《${p.title}》负责人由 ${from} 变更为 ${to}`, patentId })
+      setPatents((ps) => ps.map((x) => (x.id === patentId ? doTransfer(x, newOwnerId, keepAsCollaborator) : x)))
+      pushNotification({ event: 'transition', text: `《${p.title}》已由 ${from} 转交给 ${to}`, patentId })
+    },
+
+    batchTransfer: (items, keepAsCollaborator = true) => {
+      const map = new Map(items.map((i) => [i.patentId, i.toUserId]))
+      setPatents((ps) => ps.map((x) => (map.has(x.id) ? doTransfer(x, map.get(x.id)!, keepAsCollaborator) : x)))
+      items.forEach((i) => {
+        const p = patents.find((x) => x.id === i.patentId)!
+        pushNotification({ event: 'transition', text: `《${p.title}》已转交给 ${userById(i.toUserId).name}(批量转交)`, patentId: p.id })
+      })
+    },
+
+    // 停用(离职交接):非私有专利必须全部指定接收人;私有草案指定了就转交,未指定则转为团队可见并交给本组 PL。
+    // 同时吊销 Token、撤销其未提交的 reviewer 邀请。
+    deactivateMember: (userId, assignments) => {
+      const u = users.find((x) => x.id === userId)!
+      const owned = patents.filter((p) => p.ownerId === userId)
+      if (owned.some((p) => p.visibility !== 'private' && !assignments[p.id])) return 'unassigned'
+      const pl = teamById(u.teamId).plId
+      setPatents((ps) => ps.map((x) => {
+        let y = x
+        if (x.ownerId === userId) {
+          const to = assignments[x.id]
+          y = to
+            ? doTransfer(x, to, false)
+            : { ...doTransfer(x, pl === userId ? me.id : pl, false), visibility: 'team' }
+        }
+        const rev = y.stageData.patentability
+        if (rev.reviewers.some((r) => r.userId === userId && !r.score)) {
+          y = {
+            ...y,
+            stageData: { ...y.stageData, patentability: { ...rev, reviewers: rev.reviewers.filter((r) => r.userId !== userId || !!r.score) } },
+          }
+        }
+        return y
+      }))
+      setTokens((ts) => ts.map((t) => (t.userId === userId ? { ...t, revoked: true } : t)))
+      setUsers((us) => us.map((x) => (x.id === userId ? { ...x, deactivated: { at: now(), by: me.id } } : x)))
+      pushNotification({ event: 'transition', text: `${u.name} 已停用,名下 ${owned.length} 件专利完成交接`, patentId: '' })
+      return 'ok'
+    },
+
+    reactivateMember: (userId) =>
+      setUsers((us) => us.map((x) => (x.id === userId ? { ...x, deactivated: undefined } : x))),
+
+    // 迁移团队(换组决策:专利默认留在原组,由原组 PL 或 GL 手动迁移)
+    migrateTeam: (patentId, teamId) => {
+      const p = patents.find((x) => x.id === patentId)!
+      setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, teamId } : x)))
+      pushNotification({ event: 'transition', text: `《${p.title}》已迁移至「${teamById(teamId).name}」`, patentId })
+    },
+
+    deletePatent: (patentId) => {
+      const p = patents.find((x) => x.id === patentId)
+      if (!p || !canDeletePatent(p)) return false
+      setPatents((ps) => ps.filter((x) => x.id !== patentId))
+      setVersions((vs) => vs.filter((v) => v.patentId !== patentId))
+      setTransitions((ts) => ts.filter((t) => t.patentId !== patentId))
+      return true
     },
 
     setCollaborators: (patentId, ids) =>
@@ -498,11 +677,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     savePrefs: (patch) =>
       setPrefsMap((m) => ({ ...m, [me.id]: { ...(m[me.id] ?? DEFAULT_PREFS), ...patch } })),
 
-    createToken: (name, days) => {
+    createToken: (name, days, scope) => {
       const token = `pfk_${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`
       setTokens((ts) => [
         ...ts,
-        { id: `tk${++seq}`, userId: me.id, name, token, createdAt: now(), expiresAt: addDays(today(), days), revoked: false },
+        { id: `tk${++seq}`, userId: me.id, name, token, createdAt: now(), expiresAt: addDays(today(), days), revoked: false, scope },
       ])
       return token
     },
@@ -549,8 +728,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!oldDue || newDue <= oldDue) return 'invalid'
       const c = cycleOfPatent(p)
       if (c && !p.crossCycle && newDue > c.end) return 'beyond-cycle'
-      const days = Math.round((Date.parse(newDue) - Date.parse(oldDue)) / 86400000)
-      const auto = days <= config.overdue.extensionApprovalThreshold
+      const days = daysBetween(oldDue, newDue)
+      // 阈值按同一阶段累计已生效延期天数判断,防止拆成多次小额延期绕过审批
+      const used = p.extensions
+        .filter((e) => e.stage === p.stage && e.status === 'applied')
+        .reduce((a, e) => a + daysBetween(e.oldDue, e.newDue), 0)
+      const auto = used + days <= config.overdue.extensionApprovalThreshold
       const ext: StageExtension = {
         id: `ex${++seq}`, stage: p.stage, oldDue, newDue, reason,
         by: me.id, at: now(), status: auto ? 'applied' : 'pending',
@@ -586,7 +769,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return {
             ...x,
             extensions: x.extensions.map((e) =>
-              e.id === extId ? { ...e, status: approve ? ('applied' as const) : ('rejected' as const), approvedBy: me.id } : e,
+              e.id === extId
+                ? {
+                    ...e,
+                    status: approve ? ('applied' as const) : ('rejected' as const),
+                    approvedBy: me.id,
+                    selfApproved: e.by === me.id || p.ownerId === me.id, // PL 自批:允许,留痕
+                  }
+                : e,
             ),
             dueDates: approve ? { ...x.dueDates, [ext.stage]: ext.newDue } : x.dueDates,
           }
@@ -621,16 +811,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 }
 
 // —— KPI 计算 ——
-// 事件口径:统计「周期窗口内发生的阶段到达事件」,与专利创建时间无关 ——
-// 跨周期/结转专利无需特殊处理:进展落在哪个周期就计入哪个周期,各记各的、无双计。
-// 分母 = 周期内活跃专利(createdAt ≤ cycle.end 且未在 cycle.start 前归档;含归档,
-// 因为周期内的归档前进展仍是产出;跨周期标记专利按配置决定是否计入)。
-// rule.scorerHook 非空时,真实后端会改为调用用户注册的自由计算回调
-// (单项目 compute_item(patent, targets, transitions) / 整体 compute_kpi(items))。
+// 事件口径:目标阶段的「首次到达」必须是 advance 类流转,且落在周期窗口内、截止日之前。
+//   · 只认 advance:回退、归档、恢复归档都不算「到达」(恢复归档不会在新周期被重复计数)
+//   · 只认首次:某阶段在 A 周期首次到达,B 周期回退后再推进不再计入,跨周期无双计
+// 分母 = 周期内活跃的非私有专利(私有对 GL/PL 完全透明,不进入任何统计):
+//   · createdAt ≤ cycle.end
+//   · 完成归档保留;放弃归档仅当归档日 ≤ 周期结束前 N 天(config.overdue.abandonExcludeDays)才退出分母
+//   · 跨周期标记专利按配置决定是否计入
+// 计分:ratio = 单件得分 = 达成目标数/目标总数,整体取均值;
+//       tiered = 「全部目标均达成」的件数落入阈值档位,取对应分值,否则 elseScore
+// rule.scorerHook 非空时,真实后端改为调用自由计算回调 compute_item / compute_kpi。
 export interface KpiItemResult {
   patentId: string
   title: string
   ownerId: string
+  collaborators: string[]
   currentStage: StageKey
   achievedTargets: boolean[]
   score: number // 0-1
@@ -640,6 +835,7 @@ export interface KpiReport {
   rule: KpiRule
   items: KpiItemResult[]
   overall: number
+  fullyAchieved: number // 全部目标均达成的件数(tiered 计分依据)
 }
 
 export interface KpiSnapshot {
@@ -651,6 +847,28 @@ export interface KpiSnapshot {
   items: KpiItemResult[]
 }
 
+export function kpiInScope(p: Patent, rule: KpiRule, cycle: Cycle | undefined, config: SystemConfig) {
+  if (!cycle) return false
+  if (p.visibility === 'private') return false
+  if (p.createdAt > cycle.end) return false
+  if (p.archived?.kind === 'abandoned') {
+    const cutoff = addDays(cycle.end, -config.overdue.abandonExcludeDays)
+    if (p.archived.at.slice(0, 10) <= cutoff) return false
+  }
+  if (p.archived && p.archived.at.slice(0, 10) < cycle.start) return false
+  if (p.crossCycle && !config.overdue.includeCrossCycleInKpi) return false
+  if (rule.scope.type === 'team' && p.teamId !== rule.scope.teamId) return false
+  return true
+}
+
+// 某专利首次 advance 到达(≥)目标阶段的日期
+export function firstReach(patentId: string, stage: StageKey, transitions: StageTransition[]) {
+  const hit = transitions
+    .filter((t) => t.patentId === patentId && t.kind === 'advance' && stageIndex(t.to) >= stageIndex(stage))
+    .sort((a, b) => a.at.localeCompare(b.at))[0]
+  return hit?.at.slice(0, 10)
+}
+
 export function computeKpi(
   rule: KpiRule,
   patents: Patent[],
@@ -659,33 +877,29 @@ export function computeKpi(
   config: SystemConfig,
 ): KpiReport {
   const cycle = cycles.find((c) => c.id === rule.cycleId)
-  const inScope = patents.filter((p) => {
-    if (!cycle) return false
-    if (p.createdAt > cycle.end) return false // 周期后才创建
-    if (p.archived?.kind === 'abandoned') return false // 放弃归档不拖累分母
-    if (p.archived && p.archived.at.slice(0, 10) < cycle.start) return false // 周期开始前已完成归档
-    if (p.crossCycle && !config.overdue.includeCrossCycleInKpi) return false
-    if (rule.scope.type === 'team' && p.teamId !== rule.scope.teamId) return false
-    return true
-  })
+  const inScope = patents.filter((p) => kpiInScope(p, rule, cycle, config))
   const items: KpiItemResult[] = inScope.map((p) => {
-    const myTransitions = transitions.filter((t) => t.patentId === p.id)
     const achieved = rule.targets.map((t) => {
       if (!cycle) return false
       const deadline = t.deadline < cycle.end ? t.deadline : cycle.end
-      // 目标事件:周期窗口内「到达过」目标阶段(含之后回退的情况)
-      return myTransitions.some(
-        (tr) =>
-          stageIndex(tr.to) >= stageIndex(t.stage)
-          && tr.at.slice(0, 10) >= cycle.start
-          && tr.at.slice(0, 10) <= deadline,
-      )
+      const at = firstReach(p.id, t.stage, transitions)
+      return !!at && at >= cycle.start && at <= deadline
     })
     const score = achieved.filter(Boolean).length / rule.targets.length
-    return { patentId: p.id, title: p.title, ownerId: p.ownerId, currentStage: p.stage, achievedTargets: achieved, score }
+    return {
+      patentId: p.id, title: p.title, ownerId: p.ownerId, collaborators: p.collaborators,
+      currentStage: p.stage, achievedTargets: achieved, score,
+    }
   })
-  const overall = items.length ? items.reduce((a, b) => a + b.score, 0) / items.length : 0
-  return { rule, items, overall }
+  const fullyAchieved = items.filter((i) => i.score === 1).length
+  let overall: number
+  if (rule.scoring.mode === 'tiered') {
+    const tier = [...rule.scoring.tiers].sort((a, b) => b.minCount - a.minCount).find((t) => fullyAchieved >= t.minCount)
+    overall = tier ? tier.score : rule.scoring.elseScore
+  } else {
+    overall = items.length ? items.reduce((a, b) => a + b.score, 0) / items.length : 0
+  }
+  return { rule, items, overall, fullyAchieved }
 }
 
 export function teamName(id: string) {
@@ -724,11 +938,12 @@ export function computeStageTrend(
     }
     for (const p of patents) {
       if (p.archived) continue // 归档专利退出流水线统计
+      if (p.visibility === 'private') continue // 私有完全透明
       if (p.createdAt >= cutoff) continue // 尚未创建
       // 回放:默认从草案开始,按时间应用流转
       let stage: StageKey = 'draft'
       const my = transitions
-        .filter((t) => t.patentId === p.id && t.at.slice(0, 10) < cutoff)
+        .filter((t) => t.patentId === p.id && t.at.slice(0, 10) < cutoff && t.kind !== 'archive' && t.kind !== 'unarchive')
         .sort((a, b) => a.at.localeCompare(b.at))
       for (const t of my) stage = t.to
       counts[stage] += 1

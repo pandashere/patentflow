@@ -34,6 +34,7 @@ export const teamById = (id: string) => TEAMS.find((t) => t.id === id)!
 export const CONFIG: SystemConfig = {
   reviewPassCount: 2,
   reviewMinWeighted: 3.0,
+  reviewerDueDays: 7,
   reviewDims: [
     { key: 'difficulty', label: '技术难度', weight: 1 },
     { key: 'nonObviousness', label: '非显而易见性', weight: 1 },
@@ -61,6 +62,7 @@ export const CONFIG: SystemConfig = {
     freezeAdvanceOnOverdue: false,
     autoNudge: 'off',
     includeCrossCycleInKpi: true,
+    abandonExcludeDays: 30,
   },
 }
 
@@ -75,13 +77,13 @@ export const DEFAULT_PREFS: import('./types').UserPrefs = {
   notifyEvents: { review: true, due: true, transition: true },
   dueReminderDays: [3, 1, 0],
   quietHours: '22:00-08:00',
-  defaultVisibility: 'private',
+  defaultVisibility: 'team', // 默认团队可见;私有会锁定在草案阶段,新人易踩坑
   homePage: 'dashboard',
 }
 
 // —— 个人 API Token(示例) ——
 export const API_TOKENS: import('./types').ApiToken[] = [
-  { id: 'tk1', userId: 'u-chenxi', name: '本地脚本只读', token: 'pfk_9f2c7a31e8d44b0f', createdAt: '2026-10-12 10:00', expiresAt: '2027-10-01', revoked: false },
+  { id: 'tk1', userId: 'u-chenxi', name: '本地脚本只读', token: 'pfk_9f2c7a31e8d44b0f', createdAt: '2026-10-12 10:00', expiresAt: '2027-10-01', revoked: false, scope: 'read' },
 ]
 
 const emptyScore = { difficulty: 0, nonObviousness: 0, novelty: 0, comment: '', verdict: 'pending' as const }
@@ -103,9 +105,10 @@ export const PATENTS: Patent[] = [
       patentability: {
         summary: '核心创新点:层级隐私预算分配 + TEE 安全聚合对齐。初步检索未见完全重合方案。',
         selfAssessment: { ...emptyScore, difficulty: 4, nonObviousness: 4, novelty: 4, verdict: 'pass', comment: '自评:预算分配策略与现有均匀/等比分配有本质差异。', submittedAt: '2026-11-10' },
+        round: 1, pastRounds: [],
         reviewers: [
           { userId: 'u-suman', invitedBy: 'u-chenxi', invitedAt: '2026-11-08', score: { difficulty: 4, nonObviousness: 5, novelty: 4, verdict: 'pass', comment: '层级敏感度分配的思路新颖,建议补充与 PATE 方案的对比实验。', submittedAt: '2026-11-19' } },
-          { userId: 'u-hejing', invitedBy: 'u-chenxi', invitedAt: '2026-11-08', score: null },
+          { userId: 'u-hejing', invitedBy: 'u-chenxi', invitedAt: '2026-11-08', dueDate: '2026-11-29', score: null },
         ],
       },
       implementation: { markdown: '' },
@@ -113,6 +116,7 @@ export const PATENTS: Patent[] = [
       doi: { title: '', authors: '', venue: '', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p2', code: 'PF-2026-009', title: '低功耗蓝牙 Mesh 网络的自适应中继选择方法',
@@ -130,6 +134,7 @@ export const PATENTS: Patent[] = [
       patentability: {
         summary: '审查已通过(2/2 通过)。',
         selfAssessment: { ...emptyScore, difficulty: 3, nonObviousness: 3, novelty: 3, verdict: 'pass', submittedAt: '2026-09-01' },
+        round: 1, pastRounds: [],
         reviewers: [
           { userId: 'u-wangfang', invitedBy: 'u-chenxi', invitedAt: '2026-08-20', score: { difficulty: 3, nonObviousness: 4, novelty: 3, verdict: 'pass', comment: '双因子打分工程价值明确。', submittedAt: '2026-08-30' } },
           { userId: 'u-qinyue', invitedBy: 'u-chenxi', invitedAt: '2026-08-20', score: { difficulty: 3, nonObviousness: 3, novelty: 4, verdict: 'pass', comment: '建议权利要求覆盖预测窗口部分。', submittedAt: '2026-09-02' } },
@@ -142,6 +147,7 @@ export const PATENTS: Patent[] = [
       doi: { title: '', authors: '', venue: '', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p3', code: 'PF-2026-014', title: '面向边缘网关的容器化协议转换热更新机制',
@@ -156,12 +162,13 @@ export const PATENTS: Patent[] = [
         classification: '边缘计算 / 容器 / 工业协议',
         idea: '初步想法:把每种协议转换器做成 WASM 插件,通过控制面下发 + 双缓冲热切换。需要进一步验证 WASM 在实时性上的损耗。',
       },
-      patentability: { summary: '', selfAssessment: emptyScore, reviewers: [] },
+      patentability: { summary: '', selfAssessment: emptyScore, round: 1, reviewers: [], pastRounds: [] },
       implementation: { markdown: '' },
       search: { markdown: '' },
       doi: { title: '', authors: '', venue: '', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p4', code: 'PF-2026-007', title: '基于时序图神经网络的产线设备异常预警方法',
@@ -179,6 +186,7 @@ export const PATENTS: Patent[] = [
       patentability: {
         summary: '审查已通过。',
         selfAssessment: { ...emptyScore, difficulty: 4, nonObviousness: 4, novelty: 4, verdict: 'pass', submittedAt: '2026-07-20' },
+        round: 1, pastRounds: [],
         reviewers: [
           { userId: 'u-suman', invitedBy: 'u-qinyue', invitedAt: '2026-07-15', score: { difficulty: 4, nonObviousness: 4, novelty: 4, verdict: 'pass', comment: '图构建方式是差异点。', submittedAt: '2026-07-25' } },
           { userId: 'u-linzf', invitedBy: 'u-qinyue', invitedAt: '2026-07-15', score: { difficulty: 4, nonObviousness: 3, novelty: 4, verdict: 'pass', comment: '通过,注意检索时覆盖工艺专利。', submittedAt: '2026-07-28' } },
@@ -191,6 +199,7 @@ export const PATENTS: Patent[] = [
       doi: { title: '', authors: '', venue: '', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p5', code: 'PF-2026-005', title: '多租户 SaaS 环境下的细粒度数据权限缓存方法',
@@ -204,6 +213,7 @@ export const PATENTS: Patent[] = [
       patentability: {
         summary: '审查已通过。',
         selfAssessment: { ...emptyScore, difficulty: 3, nonObviousness: 4, novelty: 3, verdict: 'pass', submittedAt: '2026-04-01' },
+        round: 1, pastRounds: [],
         reviewers: [
           { userId: 'u-linzf', invitedBy: 'u-wangfang', invitedAt: '2026-03-28', score: { difficulty: 3, nonObviousness: 4, novelty: 3, verdict: 'pass', comment: '工程创新扎实。', submittedAt: '2026-04-05' } },
           { userId: 'u-suman', invitedBy: 'u-wangfang', invitedAt: '2026-03-28', score: { difficulty: 3, nonObviousness: 4, novelty: 4, verdict: 'pass', comment: '同意通过。', submittedAt: '2026-04-06' } },
@@ -219,6 +229,7 @@ export const PATENTS: Patent[] = [
       },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p6', code: 'PF-2026-012', title: '用于 AGV 调度的动态死锁检测与解除方法',
@@ -230,10 +241,19 @@ export const PATENTS: Patent[] = [
     stageData: {
       draft: { background: '仓储 AGV 在窄通道会车时死锁频发。', classification: 'AGV / 调度 / 死锁检测', idea: '基于资源分配图的增量式环路检测。' },
       patentability: {
-        summary: '待审查,已邀请 2 名 reviewer。',
+        summary: '第 2 轮审查:已按第 1 轮打回意见聚焦仓储拓扑先验。',
         selfAssessment: { ...emptyScore, difficulty: 4, nonObviousness: 3, novelty: 3, verdict: 'pass', submittedAt: '2026-10-20' },
+        round: 2,
+        pastRounds: [
+          {
+            round: 1, closedAt: '2026-11-12 09:15', outcome: 'rejected',
+            reviewers: [
+              { userId: 'u-zhaolei', invitedBy: 'u-duanmu', invitedAt: '2026-10-21', score: { difficulty: 3, nonObviousness: 2, novelty: 2, verdict: 'reject', comment: '创新点需聚焦仓储拓扑特殊性,通用资源分配图检测属于公知技术。', submittedAt: '2026-11-02' } },
+            ],
+          },
+        ],
         reviewers: [
-          { userId: 'u-suman', invitedBy: 'u-duanmu', invitedAt: '2026-11-12', score: null },
+          { userId: 'u-suman', invitedBy: 'u-duanmu', invitedAt: '2026-11-12', dueDate: '2026-11-19', score: null },
           { userId: 'u-zhaolei', invitedBy: 'u-duanmu', invitedAt: '2026-11-12', score: { difficulty: 3, nonObviousness: 4, novelty: 4, verdict: 'pass', comment: '复审:聚焦栅格拓扑先验后创新点成立,同意通过。', submittedAt: '2026-11-20' } },
         ],
       },
@@ -242,6 +262,7 @@ export const PATENTS: Patent[] = [
       doi: { title: '', authors: '', venue: '', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p7', code: 'PF-2026-016', title: '基于语义切分的研发文档自动脱敏方法',
@@ -252,12 +273,13 @@ export const PATENTS: Patent[] = [
     dueDates: { draft: '2026-12-28' },
     stageData: {
       draft: { background: '研发文档外发前人工脱敏效率低、遗漏率高。', classification: 'NLP / 数据安全', idea: '' },
-      patentability: { summary: '', selfAssessment: emptyScore, reviewers: [] },
+      patentability: { summary: '', selfAssessment: emptyScore, round: 1, reviewers: [], pastRounds: [] },
       implementation: { markdown: '' },
       search: { markdown: '' },
       doi: { title: '', authors: '', venue: '', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p8', code: 'PF-2026-003', title: '高密度服务器机柜的相变材料均温结构',
@@ -271,6 +293,7 @@ export const PATENTS: Patent[] = [
       patentability: {
         summary: '审查已通过。',
         selfAssessment: { ...emptyScore, difficulty: 3, nonObviousness: 4, novelty: 4, verdict: 'pass', submittedAt: '2026-02-10' },
+        round: 1, pastRounds: [],
         reviewers: [
           { userId: 'u-zhaolei', invitedBy: 'u-duanmu', invitedAt: '2026-02-01', score: { difficulty: 3, nonObviousness: 4, novelty: 4, verdict: 'pass', comment: '结构类专利,附图要细。', submittedAt: '2026-02-12' } },
           { userId: 'u-hejing', invitedBy: 'u-duanmu', invitedAt: '2026-02-01', score: { difficulty: 3, nonObviousness: 4, novelty: 4, verdict: 'pass', comment: '通过。', submittedAt: '2026-02-13' } },
@@ -281,6 +304,7 @@ export const PATENTS: Patent[] = [
       doi: { title: 'PCM-based Heat Spreading Structure for Dense Server Racks', authors: '端木睿, 赵磊', venue: 'Applied Thermal Engineering', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
   {
     id: 'p9', code: 'PF-2025-021', title: '基于二维码动态刷新的会议签到防代签方法',
@@ -294,6 +318,7 @@ export const PATENTS: Patent[] = [
       patentability: {
         summary: '审查已通过。',
         selfAssessment: { ...emptyScore, difficulty: 2, nonObviousness: 3, novelty: 3, verdict: 'pass', submittedAt: '2026-01-10' },
+        round: 1, pastRounds: [],
         reviewers: [
           { userId: 'u-linzf', invitedBy: 'u-wangfang', invitedAt: '2026-01-05', score: { difficulty: 2, nonObviousness: 3, novelty: 3, verdict: 'pass', comment: '方案完整,通过。', submittedAt: '2026-01-12' } },
           { userId: 'u-suman', invitedBy: 'u-wangfang', invitedAt: '2026-01-05', score: { difficulty: 2, nonObviousness: 3, novelty: 2, verdict: 'pass', comment: '通过,注意检索动态口令类在先技术。', submittedAt: '2026-01-13' } },
@@ -304,6 +329,7 @@ export const PATENTS: Patent[] = [
       doi: { title: '', authors: '', venue: '', abstractDraft: '' },
     },
     notify: [],
+    needsRecheck: [],
   },
 ]
 // 版本历史(示例)
@@ -336,12 +362,14 @@ export const KPI_RULES: KpiRule[] = [
       { stage: 'patentability', deadline: '2026-10-31' },
       { stage: 'implementation', deadline: '2026-12-31' },
     ],
+    scoring: { mode: 'ratio' },
     scorerHook: null, enabled: true, createdBy: 'u-linzf', updatedAt: '2026-07-02 10:00',
   },
   {
     id: 'k2', name: '2026 全年 · 全员 DOI 产出',
     scope: { type: 'global' }, cycleId: 'c2026',
     targets: [{ stage: 'doi', deadline: '2026-12-31' }],
+    scoring: { mode: 'tiered', tiers: [{ minCount: 4, score: 1 }, { minCount: 2, score: 0.6 }], elseScore: 0 },
     scorerHook: 'custom_scorer.py:weighted_score', enabled: true, createdBy: 'u-guyq', updatedAt: '2026-01-05 09:30',
   },
 ]

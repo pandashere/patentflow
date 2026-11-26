@@ -14,6 +14,8 @@ export interface User {
   title: string
   ssoBound: boolean
   ssoIssuer?: string
+  // 停用(离职):停用前须完成专利转交;停用后 Token/会话吊销、不可登录、不出现在人员选择器中
+  deactivated?: { at: string; by: string }
   password?: string // 种子用户未设密码(演示环境任意输入可登录);重置/修改后即参与校验
 }
 
@@ -69,13 +71,25 @@ export interface ReviewerAssignment {
   userId: string
   invitedBy: string
   invitedAt: string
+  dueDate?: string // reviewer 自己的审查截止日(默认邀请日 + config.reviewerDueDays),到期只提醒
+  declined?: { at: string; reason: string } // reviewer 拒绝邀请:不计入门禁
   score: ReviewScore | null
+}
+
+// 审查轮次:每次(重新)进入审查阶段或发起新一轮,开启新轮次;门禁只统计当前轮
+export interface ReviewRound {
+  round: number
+  reviewers: ReviewerAssignment[]
+  closedAt: string
+  outcome: 'passed' | 'rejected' | 'superseded'
 }
 
 export interface PatentabilityData {
   summary: string
   selfAssessment: ReviewScore // 发明人自评
-  reviewers: ReviewerAssignment[]
+  round: number // 当前轮次,从 1 开始
+  reviewers: ReviewerAssignment[] // 当前轮 reviewer
+  pastRounds: ReviewRound[] // 历史轮次(只读)
 }
 
 export interface MarkdownStageData {
@@ -116,7 +130,8 @@ export interface StageTransition {
   operatorId: string
   at: string
   reason: string
-  kind: 'advance' | 'rollback' | 'reject'
+  // advance/rollback 为真实阶段流转;archive/unarchive 只记录事件(from = to),不参与 KPI「到达」判断
+  kind: 'advance' | 'rollback' | 'reject' | 'archive' | 'unarchive'
 }
 
 // —— 通知配置 ——
@@ -157,8 +172,10 @@ export interface StageExtension {
   reason: string
   by: string
   at: string
-  status: 'applied' | 'pending' | 'rejected'
+  // void:阶段已变化,待批申请自动作废
+  status: 'applied' | 'pending' | 'rejected' | 'void'
   approvedBy?: string
+  selfApproved?: boolean // PL 审批自己专利的延期(允许,留痕)
 }
 
 export interface Patent {
@@ -177,9 +194,16 @@ export interface Patent {
   extensions: StageExtension[]
   stageData: StageDataMap
   notify: StageNotifyConfig[]
+  needsRecheck: StageKey[] // 多级回退后被跳过的后续阶段:数据保留,再次到达时提示复核,保存一次即清除
 }
 
 // —— KPI ——
+// 计分方式:ratio = 按比例(达成目标数 / 目标总数,取均值);
+// tiered = 分段阈值(按「全部目标均达成」的专利件数落档,如 ≥8 件 100%、≥5 件 60%,否则 elseScore)
+export type KpiScoring =
+  | { mode: 'ratio' }
+  | { mode: 'tiered'; tiers: { minCount: number; score: number }[]; elseScore: number }
+
 export interface KpiTarget {
   stage: StageKey
   deadline: string
@@ -191,6 +215,7 @@ export interface KpiRule {
   scope: { type: 'team' | 'global'; teamId?: string }
   cycleId: string // 绑定专利周期:统计窗口 = 周期起止
   targets: KpiTarget[]
+  scoring: KpiScoring
   // 预留:自由计算回调(单项目/整体),默认按比例给分
   scorerHook: string | null
   enabled: boolean // 停用的规则不参与仪表盘统计
@@ -211,12 +236,15 @@ export interface OverduePolicy {
   freezeAdvanceOnOverdue: boolean // 阶段逾期时是否冻结推进(默认否)
   autoNudge: 'off' | '3d' | '7d' // 自动催办节奏(demo 仅配置占位)
   includeCrossCycleInKpi: boolean // 跨周期标记专利是否计入 KPI
+  // 放弃归档退出 KPI 分母的条件:归档日早于周期结束前 N 天;之后才放弃的仍计入分母(防收口前突击放弃刷分)
+  abandonExcludeDays: number
 }
 
 export interface SystemConfig {
   reviewPassCount: number // GL 配置:至少 n 名 reviewer 通过
   reviewMinWeighted: number // GL 配置:加权均分下限,低于该值的「通过」不计入门禁
   reviewDims: ReviewDim[]
+  reviewerDueDays: number // reviewer 审查截止日 = 邀请日 + N 天(到期仅提醒,不自动处理)
   stageDefaults: Record<StageKey, number> // 各阶段默认周期(天),新建/推进时自动算出 due date
   classSuggestions: string[] // class 自由文本的建议词表(输入联想,不强制)
   numberPrefix: string // 专利编号前缀,如 PF
@@ -236,6 +264,7 @@ export interface ApiToken {
   createdAt: string
   expiresAt: string
   revoked: boolean
+  scope: 'read' | 'read-write' // 只读 Token 仅可调用 GET 接口
 }
 
 // —— 个人偏好 ——
