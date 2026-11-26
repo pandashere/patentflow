@@ -20,8 +20,8 @@ def forbidden(msg: str = "没有权限执行该操作") -> DomainError:
     return DomainError(403, "forbidden", msg)
 
 
-def bad_request(msg: str, code: str = "invalid") -> DomainError:
-    return DomainError(400, code, msg)
+def bad_request(msg: str, code: str = "invalid", **extra: object) -> DomainError:
+    return DomainError(400, code, msg, **extra)
 
 
 def conflict(msg: str, **extra: object) -> DomainError:
