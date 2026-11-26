@@ -3,7 +3,7 @@ import {
   CONFIG, KPI_RULES, NOTIFICATIONS, PATENTS, TRANSITIONS, USERS, VERSIONS, teamById,
 } from './data'
 import {
-  STAGES, stageIndex, type KpiRule, type Notification, type NotifyEvent, type Patent,
+  STAGES, stageIndex, stageLabel, type KpiRule, type Notification, type NotifyEvent, type Patent,
   type ReviewScore, type StageKey, type StageNotifyConfig, type StageTransition,
   type StageVersion, type SystemConfig, type User,
 } from './types'
@@ -50,6 +50,9 @@ interface Store {
   submitReview: (patentId: string, score: ReviewScore) => void
   saveNotifyConfig: (patentId: string, cfgs: StageNotifyConfig[]) => void
   createPatent: (title: string, visibility: Patent['visibility']) => string
+  setVisibility: (patentId: string, v: Patent['visibility']) => void
+  archive: (patentId: string, kind: 'completed' | 'abandoned', reason: string) => void
+  unarchive: (patentId: string, reason: string) => void
   saveKpiRule: (rule: KpiRule) => void
   setConfig: (c: SystemConfig) => void
   markAllRead: () => void
@@ -236,10 +239,50 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           doi: { title: '', authors: '', venue: '', abstractDraft: '' },
         },
         notify: [],
+        archived: null,
       }
       setPatents((ps) => [p, ...ps])
       addTransition({ patentId: id, from: null, to: 'draft', reason: '创建专利', kind: 'advance' })
       return id
+    },
+
+    // 可见性约束:仅 draft 阶段可以改为私有(私有专利只能停留在草案)
+    setVisibility: (patentId, v) => {
+      const p = patents.find((x) => x.id === patentId)!
+      if (v === 'private' && p.stage !== 'draft') return
+      setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, visibility: v } : x)))
+      pushNotification({
+        event: 'transition',
+        text: `《${p.title}》可见性调整为「${v === 'private' ? '私有' : v === 'team' ? '团队可见' : '公开'}」`,
+        patentId,
+      })
+    },
+
+    archive: (patentId, kind, reason) => {
+      const p = patents.find((x) => x.id === patentId)!
+      setPatents((ps) =>
+        ps.map((x) =>
+          x.id === patentId
+            ? { ...x, archived: { kind, at: now(), by: me.id, reason } }
+            : x,
+        ),
+      )
+      addTransition({
+        patentId, from: p.stage, to: p.stage, kind: 'rollback',
+        reason: `${kind === 'completed' ? '完成归档' : '放弃归档'}:${reason}`,
+      })
+      pushNotification({
+        event: 'transition',
+        text: `《${p.title}》已${kind === 'completed' ? '完成归档' : '放弃归档'}`,
+        patentId,
+      })
+    },
+
+    unarchive: (patentId, reason) => {
+      const p = patents.find((x) => x.id === patentId)!
+      setPatents((ps) => ps.map((x) => (x.id === patentId ? { ...x, archived: null } : x)))
+      addTransition({ patentId, from: p.stage, to: p.stage, kind: 'advance', reason: `恢复归档:${reason}` })
+      pushNotification({ event: 'transition', text: `《${p.title}》已恢复到「${stageLabel(p.stage)}」`, patentId })
     },
 
     saveKpiRule: (rule) =>
@@ -276,6 +319,7 @@ export interface KpiReport {
 
 export function computeKpi(rule: KpiRule, patents: Patent[], transitions: StageTransition[]): KpiReport {
   const inScope = patents.filter((p) => {
+    if (p.archived) return false // 归档专利不进入 KPI 基准
     if (rule.scope.type === 'team' && p.teamId !== rule.scope.teamId) return false
     return true
   })
@@ -299,6 +343,51 @@ export function computeKpi(rule: KpiRule, patents: Patent[], transitions: StageT
 
 export function teamName(id: string) {
   return teamById(id).name
+}
+
+// —— 阶段数量趋势:回放流转记录,统计每个月末各阶段的专利数 ——
+export interface TrendPoint {
+  month: string // YYYY-MM
+  counts: Record<StageKey, number>
+}
+
+export function monthRange(from: string, to: string): string[] {
+  const out: string[] = []
+  let [y, m] = from.split('-').map(Number)
+  const [ty, tm] = to.split('-').map(Number)
+  while (y < ty || (y === ty && m <= tm)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`)
+    m += 1
+    if (m > 12) { m = 1; y += 1 }
+  }
+  return out
+}
+
+export function computeStageTrend(
+  patents: Patent[],
+  transitions: StageTransition[],
+  months: string[],
+): TrendPoint[] {
+  return months.map((month) => {
+    // 截止点:下个月 1 号(字典序比较即可)
+    const [y, m] = month.split('-').map(Number)
+    const cutoff = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+    const counts: Record<StageKey, number> = {
+      draft: 0, patentability: 0, implementation: 0, search: 0, doi: 0,
+    }
+    for (const p of patents) {
+      if (p.archived) continue // 归档专利退出流水线统计
+      if (p.createdAt >= cutoff) continue // 尚未创建
+      // 回放:默认从草案开始,按时间应用流转
+      let stage: StageKey = 'draft'
+      const my = transitions
+        .filter((t) => t.patentId === p.id && t.at.slice(0, 10) < cutoff)
+        .sort((a, b) => a.at.localeCompare(b.at))
+      for (const t of my) stage = t.to
+      counts[stage] += 1
+    }
+    return { month, counts }
+  })
 }
 
 export type { NotifyEvent }

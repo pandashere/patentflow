@@ -121,6 +121,13 @@ export interface StageNotifyConfig {
 }
 
 // —— 专利 ——
+export interface ArchivedInfo {
+  kind: 'completed' | 'abandoned' // 完成归档 / 放弃归档
+  at: string
+  by: string
+  reason: string
+}
+
 export interface Patent {
   id: string
   code: string
@@ -129,6 +136,7 @@ export interface Patent {
   teamId: string
   visibility: Visibility
   stage: StageKey
+  archived: ArchivedInfo | null
   createdAt: string
   dueDates: Partial<Record<StageKey, string>>
   stageData: StageDataMap

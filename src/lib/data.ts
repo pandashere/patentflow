@@ -41,6 +41,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p1', code: 'PF-2026-011', title: '基于差分隐私的跨中心医疗影像分割方法',
     ownerId: 'u-chenxi', teamId: 't1', visibility: 'team', stage: 'patentability',
+    archived: null,
     createdAt: '2026-09-14',
     dueDates: { draft: '2026-09-30', patentability: '2026-12-05', implementation: '2027-01-31' },
     stageData: {
@@ -66,6 +67,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p2', code: 'PF-2026-009', title: '低功耗蓝牙 Mesh 网络的自适应中继选择方法',
     ownerId: 'u-chenxi', teamId: 't1', visibility: 'public', stage: 'implementation',
+    archived: null,
     createdAt: '2026-08-02',
     dueDates: { implementation: '2026-12-10', search: '2027-02-28' },
     stageData: {
@@ -93,6 +95,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p3', code: 'PF-2026-014', title: '面向边缘网关的容器化协议转换热更新机制',
     ownerId: 'u-chenxi', teamId: 't1', visibility: 'private', stage: 'draft',
+    archived: null,
     createdAt: '2026-11-18',
     dueDates: { draft: '2026-12-20' },
     stageData: {
@@ -111,6 +114,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p4', code: 'PF-2026-007', title: '基于时序图神经网络的产线设备异常预警方法',
     ownerId: 'u-qinyue', teamId: 't2', visibility: 'team', stage: 'search',
+    archived: null,
     createdAt: '2026-06-11',
     dueDates: { search: '2026-12-15', doi: '2027-03-01' },
     stageData: {
@@ -138,6 +142,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p5', code: 'PF-2026-005', title: '多租户 SaaS 环境下的细粒度数据权限缓存方法',
     ownerId: 'u-wangfang', teamId: 't1', visibility: 'team', stage: 'doi',
+    archived: null,
     createdAt: '2026-03-05',
     dueDates: { doi: '2026-12-31' },
     stageData: {
@@ -164,6 +169,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p6', code: 'PF-2026-012', title: '用于 AGV 调度的动态死锁检测与解除方法',
     ownerId: 'u-duanmu', teamId: 't3', visibility: 'public', stage: 'patentability',
+    archived: null,
     createdAt: '2026-10-09',
     dueDates: { patentability: '2026-11-30' },
     stageData: {
@@ -185,6 +191,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p7', code: 'PF-2026-016', title: '基于语义切分的研发文档自动脱敏方法',
     ownerId: 'u-shaoqi', teamId: 't2', visibility: 'team', stage: 'draft',
+    archived: null,
     createdAt: '2026-11-20',
     dueDates: { draft: '2026-12-28' },
     stageData: {
@@ -199,6 +206,7 @@ export const PATENTS: Patent[] = [
   {
     id: 'p8', code: 'PF-2026-003', title: '高密度服务器机柜的相变材料均温结构',
     ownerId: 'u-duanmu', teamId: 't3', visibility: 'public', stage: 'doi',
+    archived: null,
     createdAt: '2026-01-16',
     dueDates: { doi: '2026-12-08' },
     stageData: {
@@ -217,8 +225,29 @@ export const PATENTS: Patent[] = [
     },
     notify: [],
   },
+  {
+    id: 'p9', code: 'PF-2025-021', title: '基于二维码动态刷新的会议签到防代签方法',
+    ownerId: 'u-wangfang', teamId: 't1', visibility: 'team', stage: 'search',
+    archived: { kind: 'abandoned', at: '2026-05-20 16:10', by: 'u-wangfang', reason: '检索发现 CN113xxxxxxA 已覆盖核心方案,新颖性不成立,终止' },
+    createdAt: '2025-12-08',
+    dueDates: {},
+    stageData: {
+      draft: { background: '静态二维码签到可被拍照转发代签。', classification: '签到 / 动态码', idea: '倒计时动态刷新 + 地理位置校验。' },
+      patentability: {
+        summary: '审查已通过。',
+        selfAssessment: { ...emptyScore, difficulty: 2, nonObviousness: 3, novelty: 3, verdict: 'pass', submittedAt: '2026-01-10' },
+        reviewers: [
+          { userId: 'u-linzf', invitedBy: 'u-wangfang', invitedAt: '2026-01-05', score: { difficulty: 2, nonObviousness: 3, novelty: 3, verdict: 'pass', comment: '方案完整,通过。', submittedAt: '2026-01-12' } },
+          { userId: 'u-suman', invitedBy: 'u-wangfang', invitedAt: '2026-01-05', score: { difficulty: 2, nonObviousness: 3, novelty: 2, verdict: 'pass', comment: '通过,注意检索动态口令类在先技术。', submittedAt: '2026-01-13' } },
+        ],
+      },
+      implementation: { markdown: '原型已完成,签到 App 内测中。' },
+      search: { markdown: '## 检索发现\n\nCN113xxxxxxA(2021)公开了动态刷新二维码 + 地理位置双重校验的签到方案,权利要求 1 与本方案核心重叠。\n\n**结论**:新颖性不成立,建议放弃。' },
+      doi: { title: '', authors: '', venue: '', abstractDraft: '' },
+    },
+    notify: [],
+  },
 ]
-
 // 版本历史(示例)
 export const VERSIONS: import('./types').StageVersion[] = [
   { version: 1, patentId: 'p1', stage: 'draft', authorId: 'u-chenxi', at: '2026-09-14 10:24', note: '创建草案', snapshot: { background: '多中心影像建模受隐私限制……(初稿)', classification: '医疗影像', idea: '联邦学习 + 差分隐私(粗略想法)' } },

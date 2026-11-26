@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 import { STAGES, stageIndex, type Patent, type StageKey, type Visibility } from '@/lib/types'
-import { Check, Lock, RotateCcw, Users, Globe, Clock } from 'lucide-react'
+import { Check, Lock, RotateCcw, Users, Globe, Clock, Archive } from 'lucide-react'
 
 // —— 阶段语义色(由主色板派生) ——
 export const STAGE_COLOR: Record<StageKey, string> = {
@@ -21,6 +21,22 @@ export function StagePill({ stage, className }: { stage: StageKey; className?: s
     >
       <span className="size-1.5 rounded-full" style={{ backgroundColor: c }} />
       {s.label}
+    </span>
+  )
+}
+
+export function ArchivedBadge({ kind }: { kind: 'completed' | 'abandoned' }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
+        kind === 'completed'
+          ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+          : 'border-slate-300 bg-slate-100 text-slate-500',
+      )}
+    >
+      <Archive className="size-3" />
+      {kind === 'completed' ? '已归档 · 完成' : '已归档 · 放弃'}
     </span>
   )
 }
@@ -190,6 +206,98 @@ export function SectionTitle({ en, zh, right }: { en: string; zh: string; right?
         <h2 className="mt-0.5 text-lg font-bold tracking-tight">{zh}</h2>
       </div>
       {right}
+    </div>
+  )
+}
+
+// —— 阶段数量趋势折线图(GL/PL 统计视图) ——
+export function StageTrendChart({
+  points, height = 240,
+}: {
+  points: { month: string; counts: Record<StageKey, number> }[]
+  height?: number
+}) {
+  const W = 820
+  const H = height
+  const padL = 34
+  const padR = 56
+  const padT = 18
+  const padB = 30
+  const iw = W - padL - padR
+  const ih = H - padT - padB
+
+  const maxV = Math.max(1, ...points.flatMap((p) => STAGES.map((s) => p.counts[s.key])))
+  const yMax = Math.ceil(maxV * 1.15)
+  const x = (i: number) => padL + (points.length <= 1 ? iw / 2 : (i / (points.length - 1)) * iw)
+  const y = (v: number) => padT + ih - (v / yMax) * ih
+
+  const yTicks = Array.from({ length: yMax + 1 }, (_, i) => i).filter((v) => yMax <= 6 || v % Math.ceil(yMax / 6) === 0)
+
+  return (
+    <div>
+      {/* 图例 */}
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
+        {STAGES.map((s) => (
+          <span key={s.key} className="flex items-center gap-1.5 text-xs text-slate-600">
+            <span className="h-0.5 w-4 rounded" style={{ backgroundColor: STAGE_COLOR[s.key] }} />
+            {s.label}
+          </span>
+        ))}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="各阶段专利数量趋势">
+        {/* 网格与 y 轴 */}
+        {yTicks.map((v) => (
+          <g key={v}>
+            <line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="#e9edf2" strokeWidth="1" />
+            <text x={padL - 8} y={y(v)} textAnchor="end" dominantBaseline="middle" fontSize="10" fill="#94a3b8" fontFamily="JetBrains Mono, monospace">
+              {v}
+            </text>
+          </g>
+        ))}
+        {/* x 轴月份 */}
+        {points.map((p, i) => (
+          <text
+            key={p.month}
+            x={x(i)}
+            y={H - 10}
+            textAnchor="middle"
+            fontSize="10"
+            fill="#94a3b8"
+            fontFamily="JetBrains Mono, monospace"
+          >
+            {p.month.slice(2)}
+          </text>
+        ))}
+        {/* 折线 */}
+        {STAGES.map((s) => {
+          const d = points
+            .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.counts[s.key]).toFixed(1)}`)
+            .join(' ')
+          const last = points[points.length - 1]
+          return (
+            <g key={s.key}>
+              <path d={d} fill="none" stroke={STAGE_COLOR[s.key]} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+              {points.map((p, i) => (
+                <circle key={i} cx={x(i)} cy={y(p.counts[s.key])} r="3" fill="#fff" stroke={STAGE_COLOR[s.key]} strokeWidth="1.5">
+                  <title>{`${s.label} · ${p.month}:${p.counts[s.key]} 件`}</title>
+                </circle>
+              ))}
+              {/* 末端数值标签 */}
+              <text
+                x={W - padR + 8}
+                y={y(last.counts[s.key])}
+                dominantBaseline="middle"
+                fontSize="11"
+                fontWeight="700"
+                fill={STAGE_COLOR[s.key]}
+                fontFamily="JetBrains Mono, monospace"
+              >
+                {last.counts[s.key]}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
     </div>
   )
 }

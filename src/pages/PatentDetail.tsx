@@ -4,15 +4,15 @@ import { useStore } from '@/lib/store'
 import { USERS, userById, teamById } from '@/lib/data'
 import {
   NOTIFY_EVENT_LABEL, STAGES, stageIndex, stageLabel,
-  type NotifyEvent, type StageKey, type StageNotifyConfig,
+  type NotifyEvent, type StageKey, type StageNotifyConfig, type Visibility,
 } from '@/lib/types'
 import {
-  DueChip, RollbackHint, StageStepper, VisibilityTag,
+  ArchivedBadge, DueChip, RollbackHint, StageStepper, VisibilityTag,
 } from '@/components/pf'
 import { DoiPane, DraftPane, MarkdownPane, PatentabilityPane } from './panes'
 import type { Page } from '@/components/AppShell'
 import {
-  ArrowLeft, ArrowRight, Bell, GitCommitVertical, History, RotateCcw, X,
+  Archive, ArchiveRestore, ArrowLeft, ArrowRight, Bell, GitCommitVertical, History, RotateCcw, X,
 } from 'lucide-react'
 
 const ALL_EVENTS: NotifyEvent[] = ['review', 'due', 'transition']
@@ -23,7 +23,10 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
   const patent = patents.find((p) => p.id === id)
 
   const [viewStage, setViewStage] = useState<StageKey | null>(null)
-  const [action, setAction] = useState<{ kind: 'advance' } | { kind: 'rollback'; to: StageKey } | null>(null)
+  const [action, setAction] = useState<
+    { kind: 'advance' } | { kind: 'rollback'; to: StageKey } | { kind: 'archive' } | { kind: 'unarchive' } | null
+  >(null)
+  const [archiveKind, setArchiveKind] = useState<'completed' | 'abandoned'>('completed')
   const [reason, setReason] = useState('')
   const [notifyOpen, setNotifyOpen] = useState(false)
 
@@ -48,16 +51,22 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
     )
   }
 
-  const editable = canEditPatent(patent)
+  const editable = canEditPatent(patent) && !patent.archived
   const curIdx = stageIndex(patent.stage)
   const shownStage = viewStage ?? patent.stage
   const shownIdx = stageIndex(shownStage)
-  const isReviewer = isReviewerOf(patent)
+  const isReviewer = isReviewerOf(patent) && !patent.archived
   // 可编辑范围:当前阶段及之前的阶段(reviewer 对审查阶段有独立打分表单)
   const paneEditable = editable && shownIdx <= curIdx
 
+  const privateLocked = patent.stage === 'draft' && patent.visibility === 'private'
   const gateBlocked =
-    patent.stage === 'patentability' && !store.reviewGateOpen(patent)
+    (patent.stage === 'patentability' && !store.reviewGateOpen(patent)) || privateLocked
+  const gateHint = privateLocked
+    ? '私有专利只能停留在草案阶段,请先将可见性调整为团队/公开'
+    : patent.stage === 'patentability' && !store.reviewGateOpen(patent)
+      ? `审查门禁未满足:需 ${config.reviewPassCount} 名 reviewer 通过`
+      : undefined
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -77,7 +86,24 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             <span>{patent.code}</span>
             <span>·</span>
             <span>创建于 {patent.createdAt}</span>
-            <VisibilityTag v={patent.visibility} />
+            {editable ? (
+              <select
+                value={patent.visibility}
+                onChange={(e) => store.setVisibility(patent.id, e.target.value as Visibility)}
+                className="cursor-pointer rounded border bg-white px-1.5 py-px text-[11px] text-slate-700 outline-none focus:border-teal-600"
+                aria-label="修改可见性"
+                title={patent.stage !== 'draft' ? '仅草案阶段可以改为私有' : undefined}
+              >
+                <option value="private" disabled={patent.stage !== 'draft'}>
+                  私有{patent.stage !== 'draft' ? '(仅草案可设)' : ''}
+                </option>
+                <option value="team">团队可见</option>
+                <option value="public">公开</option>
+              </select>
+            ) : (
+              <VisibilityTag v={patent.visibility} />
+            )}
+            {patent.archived && <ArchivedBadge kind={patent.archived.kind} />}
           </div>
           <h1 className="mt-1.5 text-xl font-bold tracking-tight">{patent.title}</h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
@@ -90,7 +116,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setNotifyOpen(true)}
@@ -99,30 +125,81 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             <Bell className="size-3.5" />
             通知设置
           </button>
-          {editable && curIdx > 0 && (
-            <button
-              type="button"
-              onClick={() => { setAction({ kind: 'rollback', to: STAGES[curIdx - 1].key }); setReason('') }}
-              className="flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-2 text-[13px] font-medium text-amber-700 transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-            >
-              <RotateCcw className="size-3.5" />
-              回退到{STAGES[curIdx - 1].label}
-            </button>
-          )}
-          {editable && curIdx < STAGES.length - 1 && (
-            <button
-              type="button"
-              disabled={gateBlocked}
-              title={gateBlocked ? `审查门禁未满足:需 ${config.reviewPassCount} 名 reviewer 通过` : undefined}
-              onClick={() => { setAction({ kind: 'advance' }); setReason('') }}
-              className="flex items-center gap-1.5 rounded-md bg-[#12141f] px-3.5 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
-            >
-              推进至{STAGES[curIdx + 1].label}
-              <ArrowRight className="size-3.5" />
-            </button>
+          {patent.archived ? (
+            canEditPatent(patent) && (
+              <button
+                type="button"
+                onClick={() => { setAction({ kind: 'unarchive' }); setReason('') }}
+                className="flex items-center gap-1.5 rounded-md border border-teal-600 bg-white px-3 py-2 text-[13px] font-medium text-teal-700 transition-colors hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              >
+                <ArchiveRestore className="size-3.5" />
+                恢复归档
+              </button>
+            )
+          ) : (
+            editable && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setAction({ kind: 'archive' }); setReason(''); setArchiveKind(curIdx >= stageIndex('doi') ? 'completed' : 'abandoned') }}
+                  className="flex items-center gap-1.5 rounded-md border bg-white px-3 py-2 text-[13px] font-medium text-slate-600 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                >
+                  <Archive className="size-3.5" />
+                  归档
+                </button>
+                {curIdx > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setAction({ kind: 'rollback', to: STAGES[curIdx - 1].key }); setReason('') }}
+                    className="flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-2 text-[13px] font-medium text-amber-700 transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  >
+                    <RotateCcw className="size-3.5" />
+                    回退到{STAGES[curIdx - 1].label}
+                  </button>
+                )}
+                {curIdx < STAGES.length - 1 && (
+                  <button
+                    type="button"
+                    disabled={gateBlocked}
+                    title={gateHint}
+                    onClick={() => { setAction({ kind: 'advance' }); setReason('') }}
+                    className="flex items-center gap-1.5 rounded-md bg-[#12141f] px-3.5 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                  >
+                    推进至{STAGES[curIdx + 1].label}
+                    <ArrowRight className="size-3.5" />
+                  </button>
+                )}
+              </>
+            )
           )}
         </div>
       </div>
+
+      {/* 私有锁定提示 */}
+      {privateLocked && editable && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-600">
+          <span className="font-medium">私有锁定:</span>
+          该专利为私有,只能停留在草案阶段。要提交审查,请先将上方可见性调整为「团队可见」或「公开」。
+        </div>
+      )}
+
+      {/* 已归档横幅 */}
+      {patent.archived && (
+        <div className={cn(
+          'mt-3 rounded-lg border px-4 py-3',
+          patent.archived.kind === 'completed' ? 'border-emerald-200 bg-emerald-50' : 'border-slate-300 bg-slate-50',
+        )}>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Archive className="size-4" />
+            {patent.archived.kind === 'completed' ? '已完成归档' : '已放弃归档'}
+            <span className="ml-auto font-mono-x text-xs font-normal text-slate-400">
+              {patent.archived.at} · {userById(patent.archived.by).name}
+            </span>
+          </div>
+          <p className="mt-1 text-[13px] text-slate-600">{patent.archived.reason}</p>
+          <p className="mt-1 text-xs text-slate-400">归档后内容只读,退出流水线与 KPI 统计;可由负责人/PL/GL 恢复。</p>
+        </div>
+      )}
 
       {/* 步进器 */}
       <div className="mt-6 rounded-lg border bg-card px-5 py-4">
@@ -225,7 +302,7 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
         </div>
       </div>
 
-      {/* 推进/回退原因对话框 */}
+      {/* 推进/回退/归档/恢复原因对话框 */}
       {action && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setAction(null)}>
           <div
@@ -236,7 +313,10 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
           >
             <div className="flex items-center justify-between">
               <h3 className="font-bold">
-                {action.kind === 'advance' ? `推进至「${STAGES[curIdx + 1]?.label}」` : `回退至「${stageLabel(action.to)}」`}
+                {action.kind === 'advance' && `推进至「${STAGES[curIdx + 1]?.label}」`}
+                {action.kind === 'rollback' && `回退至「${stageLabel(action.to)}」`}
+                {action.kind === 'archive' && '归档专利'}
+                {action.kind === 'unarchive' && '恢复归档'}
               </h3>
               <button type="button" onClick={() => setAction(null)} className="rounded p-1 hover:bg-slate-100" aria-label="关闭">
                 <X className="size-4" />
@@ -245,12 +325,43 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
             {action.kind === 'rollback' && (
               <div className="mt-3"><RollbackHint /></div>
             )}
+            {action.kind === 'archive' && (
+              <div className="mt-3">
+                <span className="ui-label text-slate-500">归档类型</span>
+                <div className="mt-1.5 flex gap-2">
+                  {([
+                    { k: 'completed', label: '完成归档', desc: '流程走完,成果沉淀' },
+                    { k: 'abandoned', label: '放弃归档', desc: '终止推进(如新颖性不成立)' },
+                  ] as const).map((o) => (
+                    <button
+                      key={o.k}
+                      type="button"
+                      onClick={() => setArchiveKind(o.k)}
+                      className={cn(
+                        'flex-1 rounded-md border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600',
+                        archiveKind === o.k ? 'border-[#12141f] bg-[#12141f] text-white' : 'text-slate-600 hover:bg-slate-50',
+                      )}
+                    >
+                      <span className="block text-[13px] font-medium">{o.label}</span>
+                      <span className={cn('block text-[11px]', archiveKind === o.k ? 'text-slate-300' : 'text-slate-400')}>
+                        {o.desc}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <textarea
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder={action.kind === 'rollback' ? '回退原因(必填,将写入流转记录)' : '推进说明(必填)'}
-              className="mt-3 w-full rounded-md border px-3 py-2.5 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20"
+              placeholder={
+                action.kind === 'rollback' ? '回退原因(必填,将写入流转记录)'
+                : action.kind === 'advance' ? '推进说明(必填)'
+                : action.kind === 'archive' ? '归档原因(必填,如:检索发现新颖性障碍)'
+                : '恢复原因(必填)'
+              }
+              className="mt-3 w-full rounded-md border px-3 py-2.5 text-sm outline-none focus:border-teal-600 focus:ring-2 focus-visible:ring-teal-600/20"
             />
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" onClick={() => setAction(null)} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
@@ -261,16 +372,24 @@ export default function PatentDetail({ id, navigate }: { id: string; navigate: (
                 disabled={!reason.trim()}
                 onClick={() => {
                   if (action.kind === 'advance') store.advance(patent.id, reason)
-                  else store.rollback(patent.id, action.to, reason)
+                  else if (action.kind === 'rollback') store.rollback(patent.id, action.to, reason)
+                  else if (action.kind === 'archive') store.archive(patent.id, archiveKind, reason)
+                  else store.unarchive(patent.id, reason)
                   setAction(null)
                   setViewStage(null)
                 }}
                 className={cn(
-                  'rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-40',
-                  action.kind === 'advance' ? 'bg-[#12141f] hover:opacity-90' : 'bg-amber-600 hover:opacity-90',
+                  'rounded-md px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40',
+                  action.kind === 'rollback' ? 'bg-amber-600'
+                  : action.kind === 'archive' ? 'bg-slate-600'
+                  : action.kind === 'unarchive' ? 'bg-teal-700'
+                  : 'bg-[#12141f]',
                 )}
               >
-                确认{action.kind === 'advance' ? '推进' : '回退'}
+                {action.kind === 'advance' && '确认推进'}
+                {action.kind === 'rollback' && '确认回退'}
+                {action.kind === 'archive' && '确认归档'}
+                {action.kind === 'unarchive' && '确认恢复'}
               </button>
             </div>
           </div>

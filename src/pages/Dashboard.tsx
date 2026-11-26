@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
-import { useStore, computeKpi, teamName } from '@/lib/store'
+import { useStore, computeKpi, computeStageTrend, monthRange, teamName } from '@/lib/store'
 import { STAGES, stageIndex, stageLabel, type Patent } from '@/lib/types'
-import { DueChip, SectionTitle, StagePill, VisibilityTag, STAGE_COLOR } from '@/components/pf'
+import { DueChip, SectionTitle, StagePill, StageTrendChart, VisibilityTag, STAGE_COLOR } from '@/components/pf'
 import type { Page } from '@/components/AppShell'
 import { userById } from '@/lib/data'
 import { AlertTriangle, ArrowRight, ClipboardCheck, Hourglass } from 'lucide-react'
@@ -16,6 +16,7 @@ function daysUntil(d?: string) {
 export default function Dashboard({ navigate }: { navigate: (p: Page) => void }) {
   const { me, persona, visiblePatents, kpiRules, patents, transitions } = useStore()
   const visible = visiblePatents()
+  const active = visible.filter((p) => !p.archived) // 归档专利退出流水线视图
 
   // 待我审查:我是 reviewer 且尚未提交
   const myReviews = useMemo(
@@ -29,7 +30,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
   // 临期:可见专利里任一阶段 due ≤ 14 天或已逾期
   const upcoming = useMemo(() => {
     const list: { p: Patent; stage: string; date: string; days: number }[] = []
-    for (const p of visible) {
+    for (const p of active) {
       for (const [k, d] of Object.entries(p.dueDates)) {
         const days = daysUntil(d)
         if (d && days <= 14 && stageIndex(k as never) >= stageIndex(p.stage)) {
@@ -38,12 +39,12 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
       }
     }
     return list.sort((a, b) => a.days - b.days)
-  }, [visible])
+  }, [active])
 
-  const myPatents = visible.filter((p) => p.ownerId === me.id)
+  const myPatents = active.filter((p) => p.ownerId === me.id)
   const stageCounts = STAGES.map((s) => ({
     ...s,
-    count: visible.filter((p) => p.stage === s.key).length,
+    count: active.filter((p) => p.stage === s.key).length,
   }))
 
   const myKpiRules = kpiRules.filter((r) => {
@@ -51,6 +52,20 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
     if (r.scope.type === 'global') return true
     return r.scope.teamId === me.teamId
   })
+
+  // GL/PL 统计视图:各阶段数量随时间的趋势
+  // 范围:PL 看本组;GL 看全部可见(private 完全透明,不进入统计)
+  const isManager = me.role === 'pl' || me.role === 'gl'
+  const trend = useMemo(() => {
+    if (!isManager) return null
+    const scoped = me.role === 'gl' ? active : active.filter((p) => p.teamId === me.teamId)
+    const earliest = scoped.reduce((a, p) => (p.createdAt < a ? p.createdAt : a), '2026-11-26')
+    const months = monthRange(earliest.slice(0, 7), '2026-11')
+    return {
+      points: computeStageTrend(scoped, transitions, months),
+      scopeLabel: me.role === 'gl' ? '全局(不含 private)' : teamName(me.teamId),
+    }
+  }, [isManager, me.role, me.teamId, active, transitions])
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -104,7 +119,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                 <div
                   className="h-full rounded-full transition-all duration-300"
                   style={{
-                    width: `${visible.length ? (s.count / visible.length) * 100 : 0}%`,
+                    width: `${active.length ? (s.count / active.length) * 100 : 0}%`,
                     backgroundColor: STAGE_COLOR[s.key],
                   }}
                 />
@@ -113,6 +128,23 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
           ))}
         </div>
       </section>
+
+      {/* GL/PL:阶段数量趋势 */}
+      {trend && (
+        <section>
+          <SectionTitle
+            en="TREND"
+            zh="阶段数量趋势"
+            right={<span className="text-xs text-muted-foreground">统计范围:{trend.scopeLabel}</span>}
+          />
+          <div className="rounded-lg border bg-card p-5">
+            <StageTrendChart points={trend.points} />
+            <p className="mt-2 border-t pt-2.5 text-[11px] text-slate-400">
+              由阶段流转记录回放生成:回退会真实反映在曲线上(如 11 月可专利性审查 +1 来自打回后的重新提交)。
+            </p>
+          </div>
+        </section>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-5">
         {/* 待办 */}

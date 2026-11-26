@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useStore, teamName } from '@/lib/store'
 import { STAGES, type StageKey, type Visibility } from '@/lib/types'
-import { DueChip, SectionTitle, StagePill, VisibilityTag } from '@/components/pf'
+import { DueChip, SectionTitle, StagePill, VisibilityTag, ArchivedBadge } from '@/components/pf'
 import type { Page } from '@/components/AppShell'
 import { userById } from '@/lib/data'
 import { Plus, Search } from 'lucide-react'
 
-type Scope = 'mine' | 'team' | 'all'
+type Scope = 'mine' | 'team' | 'all' | 'archived'
 
 export default function PatentList({ navigate }: { navigate: (p: Page) => void }) {
   const { me, visiblePatents, createPatent } = useStore()
@@ -24,8 +24,13 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
   const list = useMemo(
     () =>
       visible.filter((p) => {
-        if (scope === 'mine' && p.ownerId !== me.id) return false
-        if (scope === 'team' && p.teamId !== me.teamId) return false
+        if (scope === 'archived') {
+          if (!p.archived) return false
+        } else {
+          if (p.archived) return false // 归档专利只在「已归档」页签出现
+          if (scope === 'mine' && p.ownerId !== me.id) return false
+          if (scope === 'team' && p.teamId !== me.teamId) return false
+        }
         if (stage && p.stage !== stage) return false
         if (vis && p.visibility !== vis) return false
         if (q && !p.title.includes(q) && !p.code.includes(q)) return false
@@ -38,6 +43,7 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
     { key: 'mine', label: '我的' },
     { key: 'team', label: me.role === 'user' ? '本组' : '本组/团队' },
     { key: 'all', label: '全部可见' },
+    { key: 'archived', label: '已归档' },
   ]
 
   return (
@@ -136,7 +142,9 @@ export default function PatentList({ navigate }: { navigate: (p: Page) => void }
                 <td className="whitespace-nowrap px-4 py-3 text-[13px]">{userById(p.ownerId).name}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">{teamName(p.teamId)}</td>
                 <td className="px-4 py-3"><VisibilityTag v={p.visibility} /></td>
-                <td className="px-4 py-3"><StagePill stage={p.stage} /></td>
+                <td className="px-4 py-3">
+                  {p.archived ? <ArchivedBadge kind={p.archived.kind} /> : <StagePill stage={p.stage} />}
+                </td>
                 <td className="px-4 py-3"><DueChip date={p.dueDates[p.stage]} /></td>
               </tr>
             ))}
