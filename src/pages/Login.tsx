@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '@/lib/store'
+import { api, ApiError } from '@/lib/api'
 import { KeyRound, MailQuestion, ScanFace, SquarePen, X } from 'lucide-react'
 
 // 登录页:本地账密 + SSO 入口(接口解耦演示)
@@ -24,6 +25,7 @@ export default function Login() {
 
   const enabledSso = providers.sso.filter((p) => p.enabled && p.issuer !== 'local')
   const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<'login' | 'register'>('login')
 
   // 邮件/IM 中的重置链接形如 /reset?token=…:打开后直接进入设置新密码
   useEffect(() => {
@@ -92,6 +94,9 @@ export default function Login() {
       {/* 右侧登录表单 */}
       <div className="flex flex-1 items-center justify-center bg-background px-6">
         <div className="w-full max-w-sm">
+          {mode === 'register' ? (
+            <RegisterPanel onBack={(email) => { setMode('login'); if (email) { setAccount(email); setLoginMsg('') } }} />
+          ) : (<>
           <div className="ui-label text-teal-700">SIGN IN</div>
           <h2 className="mt-1 text-xl font-bold">登录专利管理系统</h2>
 
@@ -102,7 +107,7 @@ export default function Login() {
               setBusy(true)
               const err = await login(account.trim(), password)
               setBusy(false)
-              setLoginMsg(err ? `${err}。忘记密码可点击「忘记密码?」重置` : '')
+              setLoginMsg(err ? (err.includes('审批') ? err : `${err}。忘记密码可点击「忘记密码?」重置`) : '')
             }}
           >
             <div>
@@ -148,6 +153,12 @@ export default function Login() {
               本地账号登录
             </button>
           </form>
+          {providers.selfRegistration && (
+            <p className="mt-3 text-center text-[13px] text-slate-500">
+              还没有账号?
+              <button type="button" onClick={() => setMode('register')} className="ml-1 font-medium text-teal-700 hover:underline">注册</button>
+            </p>
+          )}
 
           <div className="my-5 flex items-center gap-3 text-[11px] text-slate-400">
             <div className="h-px flex-1 bg-border" />
@@ -187,6 +198,7 @@ export default function Login() {
             账号异常、无法登录?请联系系统管理员 ·{' '}
             <a href="/sysadmin" className="text-slate-500 underline underline-offset-2 hover:text-slate-700">管理员入口</a>
           </p>
+          </>)}
         </div>
       </div>
 
@@ -309,5 +321,99 @@ export default function Login() {
         </div>
       )}
     </div>
+  )
+}
+
+// —— 自助注册:选择团队,提交后进入待审批(GL / 所选团队 PL / 系统管理员审批) ——
+function RegisterPanel({ onBack }: { onBack: (email?: string) => void }) {
+  const [teams, setTeams] = useState<{ id: string; name: string }[] | null>(null)
+  const [f, setF] = useState({ name: '', email: '', title: '', teamId: '', password: '', password2: '' })
+  const [msg, setMsg] = useState('')
+  const [done, setDone] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.get<{ id: string; name: string }[]>('/auth/teams')
+      .then(setTeams)
+      .catch((e) => { setTeams([]); setMsg(e instanceof ApiError ? e.message : String(e)) })
+  }, [])
+
+  const cls = 'mt-1.5 w-full rounded-md border bg-white px-3 py-2.5 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20'
+
+  if (done) {
+    return (
+      <div>
+        <div className="ui-label text-teal-700">REGISTERED</div>
+        <h2 className="mt-1 text-xl font-bold">申请已提交</h2>
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">{done}</p>
+        <button type="button" onClick={() => onBack(f.email.trim())} className="mt-6 w-full rounded-md bg-[#12141f] py-2.5 text-sm font-medium text-white hover:opacity-90">
+          返回登录
+        </button>
+      </div>
+    )
+  }
+
+  const ready = f.name.trim() && f.email.includes('@') && f.teamId && f.password.length >= 8 && f.password === f.password2
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault()
+        if (f.password !== f.password2) { setMsg('两次输入的密码不一致'); return }
+        setBusy(true)
+        try {
+          const r = await api.post<{ message: string }>('/auth/register', {
+            name: f.name.trim(), email: f.email.trim(), title: f.title.trim(), teamId: f.teamId, password: f.password,
+          })
+          setDone(r.message)
+        } catch (err) {
+          setMsg(err instanceof ApiError ? err.message : String(err))
+        }
+        setBusy(false)
+      }}
+    >
+      <div className="ui-label text-teal-700">SIGN UP</div>
+      <h2 className="mt-1 text-xl font-bold">注册账号</h2>
+      <p className="mt-1 text-xs text-muted-foreground">提交后需由 GL 或所选团队的 PL 审批,通过后即可登录。</p>
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="ui-label text-slate-500">姓名</span>
+          <input autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={cls} />
+        </label>
+        <label className="block">
+          <span className="ui-label text-slate-500">职位(可选)</span>
+          <input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={cls} />
+        </label>
+      </div>
+      <label className="mt-3 block">
+        <span className="ui-label text-slate-500">工作邮箱</span>
+        <input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="name@corp.local" className={cls} />
+      </label>
+      <label className="mt-3 block">
+        <span className="ui-label text-slate-500">所属团队</span>
+        <select value={f.teamId} onChange={(e) => setF({ ...f, teamId: e.target.value })} className={cls} disabled={!teams?.length}>
+          <option value="">{teams === null ? '加载中…' : '选择团队…'}</option>
+          {teams?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </label>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="ui-label text-slate-500">密码(≥8 位)</span>
+          <input type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} className={cls} autoComplete="new-password" />
+        </label>
+        <label className="block">
+          <span className="ui-label text-slate-500">确认密码</span>
+          <input type="password" value={f.password2} onChange={(e) => setF({ ...f, password2: e.target.value })} className={cls} autoComplete="new-password" />
+        </label>
+      </div>
+      {f.password2 && f.password !== f.password2 && <p className="mt-2 text-xs text-red-600">两次输入的密码不一致</p>}
+      {msg && <p className="mt-2 text-xs text-red-600">{msg}</p>}
+      <button type="submit" disabled={!ready || busy} className="mt-5 w-full rounded-md bg-[#12141f] py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40">
+        {busy ? '提交中…' : '提交注册申请'}
+      </button>
+      <p className="mt-3 text-center text-[13px] text-slate-500">
+        已有账号?
+        <button type="button" onClick={() => onBack()} className="ml-1 font-medium text-teal-700 hover:underline">返回登录</button>
+      </p>
+    </form>
   )
 }
