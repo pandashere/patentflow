@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* PATENTFLOW light theme — ink navy + teal accent */
+    --background: 60 4% 98%;
+    --foreground: 229 26% 12%; /* #12141f */
+    --card: 0 0% 100%;
+    --card-foreground: 229 26% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 229 26% 12%;
+    --primary: 229 26% 12%;
+    --primary-foreground: 60 4% 98%;
+    --secondary: 220 14% 95%;
+    --secondary-foreground: 229 26% 16%;
+    --muted: 220 14% 95%;
+    --muted-foreground: 228 8% 42%;
+    --accent: 175 84% 28%; /* teal */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 228 12% 89%;
+    --input: 228 12% 85%;
+    --ring: 175 84% 28%;
+    --radius: 0.5rem;
+    --sidebar-background: 229 26% 12%;
+    --sidebar-foreground: 228 14% 74%;
+    --sidebar-primary: 175 84% 32%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 229 22% 18%;
+    --sidebar-accent-foreground: 0 0% 96%;
+    --sidebar-border: 229 20% 20%;
+    --sidebar-ring: 175 84% 32%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family:
+      'Inter', -apple-system, 'PingFang SC', 'Hiragino Sans GB',
+      'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+}
+
+@layer utilities {
+  .font-mono-x {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  /* 小型大写标签:JetBrains Mono + 宽字距,系统 UI 骨架 */
+  .ui-label {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .hairline-b {
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(228 12% 80%);
+    border-radius: 3px;
+  }
+}
+
+/* due-date 紧急脉冲点 */
+@keyframes pf-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+.pulse-dot {
+  animation: pf-pulse 1.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot { animation: none; }
+  * { transition-duration: 0.01ms !important; }
+}
+
+/* markdown 预览 */
+.md-preview h1 { font-size: 1.4rem; font-weight: 700; margin: 1em 0 0.5em; }
+.md-preview h2 { font-size: 1.15rem; font-weight: 700; margin: 1em 0 0.4em; }
+.md-preview h3 { font-size: 1rem; font-weight: 600; margin: 0.9em 0 0.35em; }
+.md-preview p { margin: 0.45em 0; }
+.md-preview ul, .md-preview ol { margin: 0.5em 0; padding-left: 1.4em; }
+.md-preview ul { list-style: disc; }
+.md-preview ol { list-style: decimal; }
+.md-preview li { margin: 0.2em 0; }
+.md-preview code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.85em;
+  background: hsl(220 14% 94%);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+.md-preview pre {
+  background: hsl(229 26% 12%);
+  color: hsl(60 4% 96%);
+  padding: 12px 14px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+.md-preview pre code { background: transparent; padding: 0; color: inherit; }
+.md-preview blockquote {
+  border-left: 3px solid hsl(175 84% 28%);
+  padding-left: 12px;
+  color: hsl(var(--muted-foreground));
+  margin: 0.6em 0;
+}
+.md-preview table { border-collapse: collapse; margin: 0.6em 0; width: 100%; }
+.md-preview th, .md-preview td { border: 1px solid hsl(var(--border)); padding: 5px 10px; font-size: 0.9em; text-align: left; }
+.md-preview th { background: hsl(220 14% 95%); }
+.md-preview hr { border: 0; border-top: 1px solid hsl(var(--border)); margin: 1em 0; }
