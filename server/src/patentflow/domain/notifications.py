@@ -107,3 +107,20 @@ async def notify(
             "recipients": [{"id": u["id"], "name": u["name"], "email": u["email"]} for u in external],
         })
     return [u["id"] for u in inbox]
+
+
+async def explain_recipients(ctx: Ctx, event: str, patent: dict[str, Any]) -> list[dict[str, Any]]:
+    """预演收件人:返回 [{id, name, delivered, reason}],reason 说明为何收不到或为何仅站内。"""
+    ids = list(dict.fromkeys(await resolve_recipients(ctx, event, patent)))
+    hhmm = now()[11:16]
+    out = []
+    for u in await _users(ctx, ids):
+        prefs = await get_prefs(ctx.conn, u["id"])
+        if prefs["notifyEvents"].get(event, True) is False:
+            out.append({"id": u["id"], "name": u["name"], "delivered": False, "reason": "本人已在个人中心关闭该类通知"})
+        elif in_quiet_hours(prefs["quietHours"], hhmm):
+            out.append({"id": u["id"], "name": u["name"], "delivered": True,
+                        "reason": f"免打扰时段({prefs['quietHours']}):当前仅站内送达,回调不推送"})
+        else:
+            out.append({"id": u["id"], "name": u["name"], "delivered": True, "reason": ""})
+    return out

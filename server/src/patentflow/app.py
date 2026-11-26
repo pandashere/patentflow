@@ -18,7 +18,17 @@ from .bootstrap import ensure_bootstrap
 from .config import Settings, load_settings
 from .db import Database
 from .domain.errors import DomainError
-from .notify import LoggingNotifier, Notifier, WebhookNotifier
+from .notify import Notifier, WebhookNotifier
+
+
+async def sync_webhook(app: FastAPI) -> None:
+    """回调地址以 GL 在界面中的配置为准,未配置时回退部署配置。"""
+    from .domain.sysconfig import get_system
+
+    n = app.state.notifier
+    if isinstance(n, WebhookNotifier):
+        cfg = await get_system(app.state.db.reader)
+        n.url = cfg.get("webhookUrl") or app.state.settings.webhook_url
 
 
 def create_app(settings: Settings | None = None, notifier: Notifier | None = None) -> FastAPI:
@@ -31,6 +41,7 @@ def create_app(settings: Settings | None = None, notifier: Notifier | None = Non
         await db.connect()
         app.state.db = db
         await ensure_bootstrap(db, settings)
+        await sync_webhook(app)
         from .scheduler import reminder_loop
 
         task = asyncio.create_task(reminder_loop(app)) if settings.reminder_interval_seconds > 0 else None
@@ -45,9 +56,7 @@ def create_app(settings: Settings | None = None, notifier: Notifier | None = Non
 
     app = FastAPI(title="PATENTFLOW", version="0.2.0", lifespan=lifespan)
     app.state.settings = settings
-    app.state.notifier = notifier or (
-        WebhookNotifier(settings.webhook_url, settings.webhook_secret) if settings.webhook_url else LoggingNotifier()
-    )
+    app.state.notifier = notifier or WebhookNotifier(settings.webhook_url, settings.webhook_secret)
 
     if settings.cors_origins:
         app.add_middleware(

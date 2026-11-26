@@ -11,6 +11,8 @@ import hashlib
 import hmac
 import json
 import logging
+import time
+import urllib.error
 import urllib.request
 from typing import Any, Protocol
 
@@ -31,30 +33,59 @@ class LoggingNotifier:
                  [r.get("email") for r in event.get("recipients", [])], event.get("text"))
 
 
+def _post(url: str, secret: str, body: bytes, timeout: float) -> int:
+    headers = {"Content-Type": "application/json", "User-Agent": "PatentFlow-Webhook/1"}
+    if secret:
+        sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        headers["X-PatentFlow-Signature"] = f"sha256={sig}"
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 内网回调地址由 GL 配置
+        resp.read(2048)
+        return resp.status
+
+
+async def probe(url: str, secret: str, event: dict[str, Any], timeout: float = 5.0) -> dict[str, Any]:
+    """同步探测一次回调(不重试),返回 {ok, status, latencyMs, error} 供界面展示。"""
+    if not url.startswith(("http://", "https://")):
+        return {"ok": False, "status": None, "latencyMs": 0, "error": "地址需以 http:// 或 https:// 开头"}
+    body = json.dumps({**event, "test": True}, ensure_ascii=False).encode()
+    t0 = time.monotonic()
+    try:
+        status = await asyncio.to_thread(_post, url, secret, body, timeout)
+        return {"ok": 200 <= status < 300, "status": status, "latencyMs": round((time.monotonic() - t0) * 1000),
+                "error": None}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "status": e.code, "latencyMs": round((time.monotonic() - t0) * 1000),
+                "error": f"对方返回 HTTP {e.code}"}
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", e)
+        msg = "连接超时" if "timed out" in str(reason) else f"无法连接:{reason}"
+        return {"ok": False, "status": None, "latencyMs": round((time.monotonic() - t0) * 1000), "error": msg}
+    except TimeoutError:
+        return {"ok": False, "status": None, "latencyMs": round(timeout * 1000), "error": "连接超时"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "status": None, "latencyMs": 0, "error": str(e)}
+
+
 class WebhookNotifier(LoggingNotifier):
-    def __init__(self, url: str, secret: str = "", retries: int = 3) -> None:
+    """回调地址可在运行时更新(GL 在界面修改后即时生效)。地址为空时只记日志。"""
+
+    def __init__(self, url: str = "", secret: str = "", retries: int = 3) -> None:
         super().__init__()
         self.url, self.secret, self.retries = url, secret, retries
 
-    def _post(self, body: bytes) -> None:
-        headers = {"Content-Type": "application/json"}
-        if self.secret:
-            sig = hmac.new(self.secret.encode(), body, hashlib.sha256).hexdigest()
-            headers["X-PatentFlow-Signature"] = f"sha256={sig}"
-        req = urllib.request.Request(self.url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 内网固定 URL
-            resp.read()
-
     async def send(self, event: dict[str, Any]) -> None:
         await super().send(event)
+        if not self.url:
+            return
         body = json.dumps(event, ensure_ascii=False).encode()
         # 后台投递,不阻塞业务请求
-        asyncio.get_running_loop().create_task(self._deliver(body))
+        asyncio.get_running_loop().create_task(self._deliver(self.url, body))
 
-    async def _deliver(self, body: bytes) -> None:
+    async def _deliver(self, url: str, body: bytes) -> None:
         for attempt in range(self.retries):
             try:
-                await asyncio.to_thread(self._post, body)
+                await asyncio.to_thread(_post, url, self.secret, body, 10)
                 return
             except Exception as e:  # noqa: BLE001
                 log.warning("webhook 投递失败(第 %d 次):%s", attempt + 1, e)
