@@ -20,7 +20,8 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--port", type=int, default=8000)
     sd = sub.add_parser("seed", help="导入演示数据(所有演示账号密码 demo1234)")
     sd.add_argument("--force", action="store_true", help="清空现有业务数据后导入")
-    sp = sub.add_parser("set-password", help="为账号设置本地密码(首个管理员登录用)")
+    sub.add_parser("hash-password", help="生成 sysadmin.password_hash(交互输入,不回显)")
+    sp = sub.add_parser("set-password", help="运维兜底:直接为业务账号设置本地密码(日常请用系统管理员后台)")
     sp.add_argument("email")
     sp.add_argument("--password", default=None)
     args = ap.parse_args(argv)
@@ -28,6 +29,15 @@ def main(argv: list[str] | None = None) -> None:
     if args.config:
         os.environ["PATENTFLOW_CONFIG"] = args.config
     settings = load_settings()
+
+    if args.cmd == "hash-password":
+        from .security import hash_password
+
+        pw = getpass.getpass("系统管理员密码(≥12 位):")
+        if len(pw) < 12 or pw != getpass.getpass("再输入一次:"):
+            sys.exit("两次输入不一致或长度不足 12 位")
+        print(hash_password(pw))
+        return
 
     if args.cmd == "serve":
         import uvicorn

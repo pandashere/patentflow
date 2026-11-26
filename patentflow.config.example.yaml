@@ -10,13 +10,17 @@ database:
   # SQLite 单文件即可支撑几十人团队;后续可平滑迁移 PostgreSQL
   url: sqlite:///./patentflow.db
 
-# —— 引导管理员(bootstrap admin) ——
-# 首次部署库里没有任何用户,第一个 GL 只能从这里产生:
-# 启动时这些邮箱的账号保底为 GL(不存在则建号,SSO 首登命中也直接是 GL)。
-# 配置文件指定的 admin 受保护:API 拒绝降级,防止最后一个管理员被锁在门外。
-# 变更本列表后重启服务生效 —— 这也是管理员权限的故障恢复通道。
-admins:
-  - guyq@corp.local
+# —— 系统管理员(兜底账号)——
+# 不是业务用户:不出现在成员列表、看不到任何专利;只能登录 /sysadmin 后台做账号救援
+# (重置密码、恢复被停用账号、强制下线、指定 GL、首次部署时建团队与首个 GL),全部操作留审计。
+# 两项都不配置则关闭该入口。password_hash 用 `patentflow hash-password` 生成;
+# 也可用 password 从环境变量注入明文(不要把明文写进文件)。
+sysadmin:
+  username: admin
+  password_hash: ""
+  password: ${PATENTFLOW_ADMIN_PASSWORD}
+
+timezone: Asia/Shanghai                  # 日期一律按该时区计算
 
 auth:
   # 本地账密(演示/兜底);SSO 走 IdentityProvider 接口,新增 issuer 即接入
@@ -45,5 +49,5 @@ kpi:
   include_cross_cycle: true              # 跨周期标记专利是否计入 KPI
 
 security:
-  token_ttl_days_max: 90                 # 个人 API Token 最长有效期
+  token_ttl_days_max: 365                # 个人 API Token 最长有效期
   cors_origins: []                       # 内网部署通常为空(同源)

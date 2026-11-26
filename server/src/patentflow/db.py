@@ -147,6 +147,15 @@ CREATE TABLE IF NOT EXISTS reminder_log (key TEXT PRIMARY KEY, at TEXT NOT NULL)
 CREATE TABLE IF NOT EXISTS user_prefs (user_id TEXT PRIMARY KEY REFERENCES users(id), prefs TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- 系统管理员(兜底账号)会话与审计:与业务用户完全隔离
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  id TEXT PRIMARY KEY, username TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id TEXT PRIMARY KEY, at TEXT NOT NULL, admin TEXT NOT NULL, action TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT ''
+);
 """
 
 
