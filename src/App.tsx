@@ -8,6 +8,7 @@ import PatentDetail from '@/pages/PatentDetail'
 import Kpi from '@/pages/Kpi'
 import Admin from '@/pages/Admin'
 import Profile from '@/pages/Profile'
+import SysAdmin from '@/pages/SysAdmin'
 
 function Shell() {
   const { loggedIn, prefs, ready, me } = useStore()
@@ -35,6 +36,8 @@ function Shell() {
 }
 
 export default function App() {
+  // 系统管理员后台独立于业务系统(不加载业务数据)
+  if (window.location.pathname.replace(/\/+$/, '').endsWith('/sysadmin')) return <SysAdmin />
   return (
     <StoreProvider>
       <Shell />

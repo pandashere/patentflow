@@ -12,11 +12,12 @@ export default function Login() {
   const [ssoHint, setSsoHint] = useState<string | null>(null)
 
   // 忘记密码:申请 → (demo 展示链接)→ 打开链接设新密码
-  const [forgotOpen, setForgotOpen] = useState(false)
+  const [urlToken] = useState(() => new URLSearchParams(window.location.search).get('token'))
+  const [forgotOpen, setForgotOpen] = useState(!!urlToken)
   const [forgotEmail, setForgotEmail] = useState('')
   const [forgotLink, setForgotLink] = useState<string | null>(null)
   const [forgotSent, setForgotSent] = useState(false)
-  const [resetToken, setResetToken] = useState<string | null>(null)
+  const [resetToken, setResetToken] = useState<string | null>(urlToken)
   const [pwd1, setPwd1] = useState('')
   const [pwd2, setPwd2] = useState('')
   const [resetMsg, setResetMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -26,11 +27,7 @@ export default function Login() {
 
   // 邮件/IM 中的重置链接形如 /reset?token=…:打开后直接进入设置新密码
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('token')
-    if (t) {
-      setResetToken(t); setForgotOpen(true)
-      window.history.replaceState(null, '', window.location.pathname.replace(/reset\/?$/, ''))
-    }
+    if (urlToken) window.history.replaceState(null, '', window.location.pathname.replace(/reset\/?$/, ''))
   }, [])
 
   return (
@@ -185,6 +182,10 @@ export default function Login() {
 
           <p className="mt-6 text-center text-[11px] text-slate-400">
             首次 SSO 登录将引导绑定本地账号(email 自动匹配 / 账密验证 / GL 预绑定)
+          </p>
+          <p className="mt-3 text-center text-[11px] text-slate-400">
+            账号异常、无法登录?请联系系统管理员 ·{' '}
+            <a href="/sysadmin" className="text-slate-500 underline underline-offset-2 hover:text-slate-700">管理员入口</a>
           </p>
         </div>
       </div>
