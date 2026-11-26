@@ -2,7 +2,7 @@ import { useStore, computeStageTrend, monthRange, teamName, today, daysBetween }
 import { STAGES, stageIndex, stageLabel, type Patent } from '@/lib/types'
 import { DueChip, RiskTag, SectionTitle, StagePill, StageTrendChart, ToneTag, VisibilityTag, STAGE_COLOR } from '@/components/pf'
 import type { Page } from '@/components/AppShell'
-import { AlertTriangle, ArrowRight, CalendarClock, ClipboardCheck, Hourglass, RefreshCw, SearchCheck } from 'lucide-react'
+import { AlertTriangle, ArrowRight, CalendarClock, ClipboardCheck, Hourglass, RefreshCw, SearchCheck, UserPlus } from 'lucide-react'
 
 function daysUntil(d?: string) {
   if (!d) return Infinity
@@ -12,7 +12,7 @@ function daysUntil(d?: string) {
 export default function Dashboard({ navigate }: { navigate: (p: Page) => void }) {
   const {
     me, persona, visiblePatents, kpiRules, patents, transitions, userById, cycles, activeCycle,
-    stageOverdueDays, closingRisk, reviewExtension, reviewRejected, canOperatePatent, kpiReport,
+    stageOverdueDays, closingRisk, reviewExtension, reviewRejected, canOperatePatent, kpiReport, pendingRegistrations,
   } = useStore()
   const visible = visiblePatents()
   const active = visible.filter((p) => !p.archived) // 归档专利退出流水线视图
@@ -106,6 +106,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
               [myReviews.length, '项待审查'],
               [rejectedMine.length, '件被打回待修改'],
               [approvalTodos.length, '个延期待审批'],
+              [pendingRegistrations.length, '个注册待审批'],
               [upcoming.filter((u) => u.days <= 7).length, '个临近截止'],
             ])}
           </h1>
@@ -325,6 +326,17 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                 right={<ToneTag tone="warn">待审批</ToneTag>}
               />
             ))}
+            {pendingRegistrations.length > 0 && (
+              <TodoRow
+                key="registrations"
+                onClick={() => navigate({ name: 'admin' })}
+                icon={<UserPlus className="size-4" />}
+                iconCls="bg-sky-50 text-sky-700"
+                title={`${pendingRegistrations.length} 个新注册待审批`}
+                sub={pendingRegistrations.slice(0, 3).map((u) => `${u.name}(${teamName(u.teamId)})`).join('、')}
+                right={<ToneTag tone="info">去审批</ToneTag>}
+              />
+            )}
             {recheckMine.map((p) => (
               <TodoRow
                 key={`c-${p.id}`}
@@ -353,7 +365,7 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
                 <DueChip date={u.date} />
               </button>
             ))}
-            {myReviews.length + rejectedMine.length + approvalTodos.length + recheckMine.length + upcoming.length === 0 && (
+            {myReviews.length + rejectedMine.length + approvalTodos.length + recheckMine.length + upcoming.length + pendingRegistrations.length === 0 && (
               <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                 没有待办。该写的草案写完了吗?
               </div>

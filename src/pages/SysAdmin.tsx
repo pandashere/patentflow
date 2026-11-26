@@ -32,7 +32,7 @@ interface AuditRow {
 const ACTION_LABEL: Record<string, string> = {
   login: '登录', login_failed: '登录失败', 'reset_password:temp': '重置密码(临时密码)',
   'reset_password:link': '重置密码(链接)', revoke_sessions: '强制下线', 'revoke_sessions:tokens': '强制下线并吊销 Token',
-  reactivate: '恢复账号', update_user: '调整角色/团队', create_user: '新建账号', create_team: '新建团队',
+  reactivate: '恢复账号', update_user: '调整角色/团队', registration_approve: '通过注册', registration_reject: '拒绝注册', create_user: '新建账号', create_team: '新建团队',
 }
 
 const inputCls = 'rounded-md border bg-white px-2.5 py-1.5 text-[13px] outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20'
@@ -218,7 +218,9 @@ function Console({ admin, onLogout }: { admin: string; onLogout: () => void }) {
                       </select>
                     </td>
                     <td className="px-3 py-2.5 text-xs">
-                      {u.deactivated
+                      {u.pending
+                        ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">注册待审批 · {u.pending.at.slice(0, 10)}</span>
+                        : u.deactivated
                         ? <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-600">已停用 · {u.deactivated.at.slice(0, 10)}</span>
                         : <span className="text-slate-500">{u.activeSessions} 个会话 · {u.activeTokens} 个 Token</span>}
                     </td>
@@ -228,6 +230,17 @@ function Console({ admin, onLogout }: { admin: string; onLogout: () => void }) {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex flex-wrap gap-1.5">
+                        {u.pending ? (<>
+                          <ActBtn icon={UserCheck} onClick={() => run(() => api.post(`/sysadmin/registrations/${u.id}/approve`, { teamId: u.teamId, role: u.role }))}>
+                            通过注册
+                          </ActBtn>
+                          <ActBtn icon={X} onClick={() => setConfirm({
+                            title: `拒绝 ${u.name} 的注册?`, body: '对方会收到通知,可以重新申请。',
+                            run: () => run(() => api.post(`/sysadmin/registrations/${u.id}/reject`, {})),
+                          })}>
+                            拒绝
+                          </ActBtn>
+                        </>) : (<>
                         <ActBtn
                           icon={KeyRound}
                           onClick={() => setConfirm({
@@ -265,6 +278,7 @@ function Console({ admin, onLogout }: { admin: string; onLogout: () => void }) {
                             恢复账号
                           </ActBtn>
                         )}
+                        </>)}
                       </div>
                     </td>
                   </tr>
