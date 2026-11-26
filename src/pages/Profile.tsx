@@ -373,8 +373,9 @@ function BatchTransfer() {
               <button
                 type="button"
                 disabled={!to || picked.length === 0}
-                onClick={() => {
-                  batchTransfer(picked.map((id) => ({ patentId: id, toUserId: to })), keep)
+                onClick={async () => {
+                  const ok = await batchTransfer(picked.map((id) => ({ patentId: id, toUserId: to })), keep)
+                  if (!ok) return // 失败原因由全局提示展示,保留勾选以便重试
                   setDone(`已将 ${picked.length} 件专利转交给 ${userById(to).name}`)
                   setPicked([])
                 }}

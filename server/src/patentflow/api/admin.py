@@ -238,6 +238,11 @@ async def put_config(body: dict[str, Any], request: Request, auth: Auth = Depend
         def deep_merge(base: Any, patch: Any) -> Any:
             if isinstance(base, dict) and isinstance(patch, dict):
                 return {**base, **{k: deep_merge(base.get(k), v) for k, v in patch.items()}}
+            # 带 key 的对象数组(如审查维度)按 key 逐项合并,只改动补丁里出现的项与字段
+            if (isinstance(base, list) and isinstance(patch, list) and patch
+                    and all(isinstance(x, dict) and "key" in x for x in base + patch)):
+                by_key = {x["key"]: x for x in patch}
+                return [deep_merge(x, by_key[x["key"]]) if x["key"] in by_key else x for x in base]
             return patch
 
         merged = deep_merge(ctx.cfg, body)

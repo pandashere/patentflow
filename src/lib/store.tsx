@@ -504,11 +504,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const next = c as unknown as Record<string, unknown>
       // 递归比较:对象只保留变化的叶子字段,数组整体替换
       const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x)
-      const diff = (a: Record<string, unknown>, v: Record<string, unknown>) => {
+      // 带 key 的对象数组(审查维度):只提交变化的项与字段,由后端按 key 合并
+      const keyedList = (x: unknown): x is Record<string, unknown>[] =>
+        Array.isArray(x) && x.length > 0 && x.every((i) => isObj(i) && 'key' in i)
+      const diff = (a: Record<string, unknown>, v: Record<string, unknown>): Record<string, unknown> => {
         const out: Record<string, unknown> = {}
         for (const k of Object.keys(v)) {
           if (JSON.stringify(a[k]) === JSON.stringify(v[k])) continue
-          out[k] = isObj(a[k]) && isObj(v[k]) ? diff(a[k] as Record<string, unknown>, v[k] as Record<string, unknown>) : v[k]
+          const av = a[k], vv = v[k]
+          if (isObj(av) && isObj(vv)) out[k] = diff(av, vv)
+          else if (keyedList(av) && keyedList(vv)) {
+            out[k] = vv
+              .map((item) => {
+                const old = av.find((o) => o.key === item.key)
+                return old ? { key: item.key, ...diff(old, item) } : item
+              })
+              .filter((item) => Object.keys(item).length > 1)
+          } else out[k] = vv
         }
         return out
       }

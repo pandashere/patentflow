@@ -171,14 +171,14 @@ export default function Dashboard({ navigate }: { navigate: (p: Page) => void })
       )}
 
       {/* GL/PL:逾期与收口 */}
-      {isManager && cycle && (
+      {isManager && (
         <section>
           <SectionTitle
             en="OVERDUE"
             zh="逾期与收口"
             right={
               <span className="text-xs text-muted-foreground">
-                {cycle.name} 收口 {cycle.end} · 剩 {cycleDaysLeft} 天
+                {cycle ? `${cycle.name} 收口 ${cycle.end} · 剩 ${cycleDaysLeft} 天` : '当前没有进行中的专利周期'}
               </span>
             }
           />

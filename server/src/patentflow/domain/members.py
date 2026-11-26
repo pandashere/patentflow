@@ -187,16 +187,8 @@ async def delete_team(ctx: Ctx, tid: str) -> None:
     ) as c:
         if (await c.fetchone())["n"]:
             raise conflict("团队仍有专利(含归档),请先迁移到其他团队")
-    async with ctx.conn.execute(
-        "SELECT (SELECT COUNT(*) FROM users WHERE team_id = ?) + (SELECT COUNT(*) FROM patents WHERE team_id = ?) n",
-        (tid, tid),
-    ) as c:
-        referenced = (await c.fetchone())["n"] > 0
-    if referenced:
-        # 仍被私有草案或停用账号引用:停用团队(从所有选择列表中消失),保留历史引用
-        await ctx.conn.execute("UPDATE teams SET archived_at = ?, pl_id = NULL WHERE id = ?", (now(), tid))
-    else:
-        await ctx.conn.execute("DELETE FROM teams WHERE id = ?", (tid,))
+    # 一律停用(软删除):无论是否仍被私有草案 / 停用账号引用,GL 观察到的结果都相同(决策 9)
+    await ctx.conn.execute("UPDATE teams SET archived_at = ?, pl_id = NULL WHERE id = ?", (now(), tid))
 
 
 async def _leads_other(ctx: Ctx, uid: str, except_tid: str) -> bool:

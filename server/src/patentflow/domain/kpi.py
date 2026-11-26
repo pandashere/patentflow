@@ -28,6 +28,17 @@ def archived_through(trs: list[dict[str, Any]], start: str, end: str) -> bool:
     return archived and not any(e["kind"] == "unarchive" and start <= e["at"][:10] <= end for e in events)
 
 
+def abandoned_early_in_cycle(trs: list[dict[str, Any]], end: str, cutoff: str) -> bool:
+    """回放到周期结束日:当时处于「放弃归档」状态,且放弃日早于分界日 → 不计入该周期分母。
+    (期后才恢复归档的专利,其在本周期内的放弃仍然有效)"""
+    last = None
+    for e in sorted((t for t in trs if t["kind"] in ("archive", "unarchive")), key=lambda t: t["at"]):
+        if e["at"][:10] <= end:
+            last = e
+    return bool(last and last["kind"] == "archive" and last["reason"].startswith("放弃归档")
+                and last["at"][:10] < cutoff)
+
+
 def in_scope(p: dict[str, Any], rule: dict[str, Any], cycle: dict[str, Any] | None, cfg: dict[str, Any],
              trs: list[dict[str, Any]] | None = None) -> bool:
     if not cycle or p["visibility"] == "private" or p["createdAt"] > cycle["end"]:
@@ -40,6 +51,10 @@ def in_scope(p: dict[str, Any], rule: dict[str, Any], cycle: dict[str, Any] | No
         return False
     if trs is not None and archived_through(trs, cycle["start"], cycle["end"]):
         return False  # 期后才恢复归档的专利,在本周期内始终处于归档,不计入分母
+    if trs is not None and abandoned_early_in_cycle(
+        trs, cycle["end"], add_days(cycle["end"], -int(cfg["overdue"]["abandonExcludeDays"]))
+    ):
+        return False
     if p["crossCycle"] and not cfg["overdue"]["includeCrossCycleInKpi"]:
         return False
     if rule["scope"]["type"] == "team" and p["teamId"] != rule["scope"].get("teamId"):

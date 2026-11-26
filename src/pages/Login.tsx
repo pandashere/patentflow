@@ -5,7 +5,7 @@ import { KeyRound, MailQuestion, ScanFace, SquarePen, X } from 'lucide-react'
 
 // 登录页:本地账密 + SSO 入口(接口解耦演示)
 // 每个 SSO provider 对应后端 identity/provider 的一个实现,这里只做 UI 示意。
-export default function Login() {
+export default function Login({ onResetDone }: { onResetDone?: () => void } = {}) {
   const { providers, login, requestPasswordReset, resetPassword } = useStore()
   const [account, setAccount] = useState(providers.demo ? 'chenxi@corp.local' : '')
   const [password, setPassword] = useState('')
@@ -25,6 +25,7 @@ export default function Login() {
 
   const enabledSso = providers.sso.filter((p) => p.enabled && p.issuer !== 'local')
   const [busy, setBusy] = useState(false)
+  const closeForgot = () => { setForgotOpen(false); onResetDone?.() }
   const [mode, setMode] = useState<'login' | 'register'>('login')
 
   // 邮件/IM 中的重置链接形如 /reset?token=…:打开后直接进入设置新密码
@@ -204,7 +205,7 @@ export default function Login() {
 
       {/* 忘记密码:经通知接口(webhook → 邮件/IM 适配器)投递一次性带 token 的重置链接 */}
       {forgotOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setForgotOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => closeForgot()}>
           <div
             className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
@@ -216,7 +217,7 @@ export default function Login() {
                 <MailQuestion className="size-4 text-teal-700" />
                 {resetToken ? '设置新密码' : '重置密码'}
               </h3>
-              <button type="button" onClick={() => setForgotOpen(false)} className="rounded p-1 hover:bg-slate-100" aria-label="关闭">
+              <button type="button" onClick={() => closeForgot()} className="rounded p-1 hover:bg-slate-100" aria-label="关闭">
                 <X className="size-4" />
               </button>
             </div>
@@ -256,7 +257,7 @@ export default function Login() {
                   </div>
                 )}
                 <div className="mt-4 flex justify-end gap-2">
-                  <button type="button" onClick={() => setForgotOpen(false)} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
+                  <button type="button" onClick={() => closeForgot()} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
                     关闭
                   </button>
                   <button
@@ -296,7 +297,7 @@ export default function Login() {
                   <p className={`mt-2 text-xs ${resetMsg.ok ? 'text-teal-700' : 'text-red-600'}`}>{resetMsg.text}</p>
                 )}
                 <div className="mt-4 flex justify-end gap-2">
-                  <button type="button" onClick={() => setForgotOpen(false)} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
+                  <button type="button" onClick={() => closeForgot()} className="rounded-md border px-4 py-2 text-sm hover:bg-slate-50">
                     关闭
                   </button>
                   <button

@@ -76,7 +76,7 @@ async def notify_new_round(ctx: Ctx, p: dict[str, Any]) -> None:
     ) as cur:
         ids = [r["user_id"] for r in await cur.fetchall()]
     if ids:
-        await notify(ctx, "review", f"《{p['title']}》开始第 {rnd} 轮审查,请重新评审", only=ids)
+        await notify(ctx, "review", f"《{p['title']}》开始第 {rnd} 轮审查,请重新评审", p, only=ids)
 
 
 def _in_review(p: dict[str, Any]) -> None:

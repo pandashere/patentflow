@@ -816,10 +816,18 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
     }),
   )
 
+  // 只有改动过(或原本就有覆盖)的阶段才保存为专利级覆盖;其余阶段继续沿用 GL 的全局默认收件人
+  const [overridden, setOverridden] = useState<Set<StageKey>>(() => new Set(patent.notify.map((n) => n.stage)))
   const update = (stage: StageKey, patch: Partial<StageNotifyConfig>) => {
     setPv(null) // 配置变了,旧的预演结果作废
+    setOverridden((s) => new Set(s).add(stage))
     setCfgs((cs) => cs.map((c) => (c.stage === stage ? { ...c, ...patch } : c)))
   }
+  const resetStage = (stage: StageKey) => {
+    setPv(null)
+    setOverridden((s) => { const n = new Set(s); n.delete(stage); return n })
+  }
+  const effective = cfgs.filter((c) => overridden.has(c.stage))
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
@@ -847,6 +855,13 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
             <div key={c.stage} className="rounded-lg border p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold">{stageLabel(c.stage)}</span>
+                {overridden.has(c.stage) ? (
+                  <button type="button" onClick={() => resetStage(c.stage)} className="text-[11px] text-slate-400 hover:text-teal-700 hover:underline">
+                    恢复全局默认
+                  </button>
+                ) : (
+                  <span className="rounded bg-slate-100 px-1.5 py-px text-[10px] text-slate-500">沿用全局默认 · 修改后生效</span>
+                )}
                 <div className="ml-auto flex gap-1.5">
                   {ALL_EVENTS.map((ev) => (
                     <button
@@ -915,7 +930,7 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
             <span className="text-xs text-muted-foreground">时</span>
             <button
               type="button" disabled={pvBusy}
-              onClick={async () => { setPvBusy(true); setPv(await previewNotify(patentId, pvEvent, cfgs)); setPvBusy(false) }}
+              onClick={async () => { setPvBusy(true); setPv(await previewNotify(patentId, pvEvent, effective)); setPvBusy(false) }}
               className="ml-auto rounded-md border bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
             >
               {pvBusy ? '预演中…' : '预演送达并测试回调'}
@@ -954,7 +969,7 @@ function NotifyDialog({ patentId, onClose }: { patentId: string; onClose: () => 
           </button>
           <button
             type="button"
-            onClick={() => { saveNotifyConfig(patentId, cfgs); onClose() }}
+            onClick={() => { saveNotifyConfig(patentId, effective); onClose() }}
             className="rounded-md bg-[#12141f] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
           >
             保存配置
