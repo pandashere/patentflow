@@ -6,8 +6,9 @@ import {
   NOTIFY_EVENT_LABEL, ROLE_LABEL, STAGES,
   type NotifyEvent, type Role,
 } from '@/lib/types'
-import { SectionTitle } from '@/components/pf'
-import { Download, Link2, ShieldCheck, UserPlus, Webhook } from 'lucide-react'
+import { SectionTitle, StagePill, ToneTag, VisibilityTag } from '@/components/pf'
+import { Modal } from './PatentDetail'
+import { Download, Link2, ShieldCheck, UserMinus, UserPlus, Webhook } from 'lucide-react'
 
 const ROLE_STYLE: Record<Role, string> = {
   user: 'bg-slate-100 text-slate-600',
@@ -22,8 +23,9 @@ export default function Admin() {
   const {
     me, config, setConfig, users, updateMember, addMember,
     tokens, adminRevokeToken, patents, transitions, versions, kpiRules,
-    cycles, saveCycle, closeCycle,
+    cycles, saveCycle, closeCycle, reactivateMember,
   } = useStore()
+  const [offboarding, setOffboarding] = useState<string | null>(null)
   const isGl = me.role === 'gl'
   const myTeamUsers = users.filter((u) => me.role === 'gl' || u.teamId === me.teamId)
 
@@ -31,6 +33,10 @@ export default function Admin() {
   const [newbie, setNew] = useState({ name: '', email: '', title: '', teamId: 't1', role: 'user' as Role })
   const [exported, setExported] = useState('')
   const [newCycle, setNewCycle] = useState({ name: '', start: '', end: '' })
+
+  // 导出同样遵守「私有完全透明」:私有专利及其版本/流转不进入导出
+  const exportable = patents.filter((p) => p.visibility !== 'private')
+  const exportIds = new Set(exportable.map((p) => p.id))
 
   const download = (filename: string, content: string, type: string) => {
     const blob = new Blob([content], { type })
@@ -49,7 +55,10 @@ export default function Admin() {
       JSON.stringify(
         {
           exportedAt: new Date().toISOString(), exportedBy: me.id,
-          config, users, patents, transitions, versions, kpiRules,
+          config, users, patents: exportable,
+          transitions: transitions.filter((t) => exportIds.has(t.patentId)),
+          versions: versions.filter((v) => exportIds.has(v.patentId)),
+          kpiRules,
         },
         null,
         2,
@@ -59,7 +68,7 @@ export default function Admin() {
 
   const exportCsv = () => {
     const esc = (s: string) => `"${s.replaceAll('"', '""')}"`
-    const rows = patents.map((p) => [
+    const rows = exportable.map((p) => [
       p.code, esc(p.title), users.find((u) => u.id === p.ownerId)?.name ?? p.ownerId,
       teamName(p.teamId), p.visibility, p.stage,
       p.archived ? (p.archived.kind === 'completed' ? '完成归档' : '放弃归档') : '在研',
@@ -73,8 +82,9 @@ export default function Admin() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8">
+    <div className="mx-auto max-w-6xl space-y-8">
       <SectionTitle
+        page
         en="TENANCY"
         zh="租户管理"
         right={
@@ -149,13 +159,14 @@ export default function Admin() {
                 <th className="px-4 py-2.5 ui-label text-slate-500">邮箱</th>
                 <th className="px-4 py-2.5 ui-label text-slate-500">SSO 绑定</th>
                 <th className="px-4 py-2.5 ui-label text-slate-500">API Token</th>
+                {isGl && <th className="px-4 py-2.5 ui-label text-slate-500">状态</th>}
               </tr>
             </thead>
             <tbody className="divide-y">
               {myTeamUsers.map((u) => {
                 const activeTokens = tokens.filter((t) => t.userId === u.id && !t.revoked)
                 return (
-                  <tr key={u.id}>
+                  <tr key={u.id} className={cn(u.deactivated && 'bg-slate-50 text-slate-400')}>
                     <td className="px-4 py-3">
                       <span className="font-medium">{u.name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">{u.title}</span>
@@ -231,6 +242,29 @@ export default function Admin() {
                         </span>
                       )}
                     </td>
+                    {isGl && (
+                      <td className="px-4 py-3">
+                        {u.deactivated ? (
+                          <span className="flex items-center gap-2">
+                            <ToneTag tone="neutral">已停用</ToneTag>
+                            <button type="button" onClick={() => reactivateMember(u.id)} className="text-xs text-teal-700 hover:underline">
+                              恢复
+                            </button>
+                          </span>
+                        ) : u.id !== me.id && !isConfigAdmin(u.email) ? (
+                          <button
+                            type="button"
+                            onClick={() => setOffboarding(u.id)}
+                            className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-600"
+                          >
+                            <UserMinus className="size-3.5" />
+                            停用 / 离职交接
+                          </button>
+                        ) : (
+                          <ToneTag tone="ok">在职</ToneTag>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -239,7 +273,8 @@ export default function Admin() {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Reviewer 不是行政角色,不在此表维护 —— 它以「按专利邀请」的方式存在(见 review_assignment)。
-          专利负责人变更在专利详情页操作(负责人/本组 PL/GL)。
+          专利转交在专利详情页「更多」或个人中心操作;成员停用时须先完成离职交接。
+          成员换组时,其名下专利留在原组,由原组 PL 或 GL 在详情页手动迁移。
           标记「配置文件管理员」的账号由 patentflow.config.yaml 的 admins 指定,UI 中不可降级。
         </p>
       </section>
@@ -260,13 +295,16 @@ export default function Admin() {
             <tbody className="divide-y text-[13px]">
               {([
                 ['新建专利 / 编辑本人的专利内容', '本人', '本人', '本人'],
-                ['推进 / 回退 / 归档 / 转让 / 申请延期', '本人专利', '本组成员专利', '全部(非私有)'],
+                ['推进 / 回退 / 归档 / 转交 / 申请延期', '本人专利', '本组成员专利', '全部(非私有)'],
+                ['删除专利(从未离开草案且未邀请 reviewer)', '本人专利', '本人专利', '本人专利'],
+                ['迁移专利所属团队', '—', '本组专利', '全部(非私有)'],
+                ['审批超阈值延期', '—', '本组(含自己的专利,留痕)', '全部'],
                 ['查看团队可见专利', '同组', '本组', '全部'],
                 ['查看私有专利', '仅本人', '不可见', '不可见'],
                 ['可专利性审查打分', '被邀请时', '被邀请时', '被邀请时'],
                 ['KPI 规则管理', '—', '本组规则', '全局规则'],
                 ['专利周期 / 逾期策略 / 审查门禁等系统配置', '—', '只读', '可编辑'],
-                ['成员与角色管理', '—', '本组只读', '可编辑(配置文件管理员除外)'],
+                ['成员与角色管理 / 停用与离职交接', '—', '本组只读', '可编辑(配置文件管理员除外)'],
                 ['跨周期标记 / Token 全局吊销 / 数据导出', '—', '—', '可操作'],
                 ['配置文件管理员指定', '—', '—', '仅 patentflow.config.yaml'],
               ] as [string, string, string, string][]).map(([cap, u, pl, gl]) => (
@@ -294,7 +332,7 @@ export default function Admin() {
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium">通过人数 n</div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                至少 n 名 reviewer 判定「通过」且加权达标才可进入实施;任一打回自动退回草案
+                本轮至少 n 名 reviewer 判定「通过」且加权达标才可进入实施;本轮有打回则门禁关闭,由发明人修改后发起新一轮
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -315,6 +353,23 @@ export default function Admin() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-t pt-4">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">reviewer 审查期限(天)</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                邀请后 N 天为该 reviewer 的审查截止日;到期只发提醒,不自动撤销或判定
+              </div>
+            </div>
+            <input
+              type="number" min={1} max={60}
+              value={config.reviewerDueDays}
+              disabled={!isGl}
+              onChange={(e) => setConfig({ ...config, reviewerDueDays: Math.max(1, Number(e.target.value)) })}
+              className={cn(inputCls, 'w-20 text-center font-mono-x')}
+              aria-label="reviewer 审查期限"
+            />
           </div>
 
           <div className="border-t pt-4">
@@ -496,7 +551,7 @@ export default function Admin() {
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium">延期审批阈值(天)</div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                单次延期 ≤ 该值自动生效;超过则挂起,需本组 PL 或 GL 批准后才改 due date
+                同一阶段累计延期 ≤ 该值自动生效;超过则挂起,需本组 PL 或 GL 批准(PL 可自批,留痕)
               </div>
             </div>
             <input
@@ -508,6 +563,23 @@ export default function Admin() {
               }
               className={cn(inputCls, 'w-20 text-center font-mono-x')}
               aria-label="延期审批阈值"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-t pt-4">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">放弃归档退出 KPI 分母的提前量(天)</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                放弃日早于周期结束前 N 天,才退出该周期 KPI 分母;之后放弃的仍计入,防止收口前突击放弃刷分
+              </div>
+            </div>
+            <input
+              type="number" min={0} max={180}
+              value={config.overdue.abandonExcludeDays}
+              disabled={!isGl}
+              onChange={(e) => setConfig({ ...config, overdue: { ...config.overdue, abandonExcludeDays: Math.max(0, Number(e.target.value)) } })}
+              className={cn(inputCls, 'w-20 text-center font-mono-x')}
+              aria-label="放弃归档提前量"
             />
           </div>
 
@@ -738,6 +810,87 @@ export default function Admin() {
           身份绑定策略可配:email 自动匹配 / 首次登录账密绑定 / GL 预绑定 subject。
         </div>
       </section>
+      {offboarding && <OffboardDialog userId={offboarding} onClose={() => setOffboarding(null)} />}
     </div>
+  )
+}
+
+// —— 停用 / 离职交接 ——
+// 非私有专利必须逐件指定接收人;私有草案可指定,不指定则自动转为团队可见并交给本组 PL。
+// 停用同时吊销其全部 Token、撤销其尚未提交的 reviewer 邀请。
+function OffboardDialog({ userId, onClose }: { userId: string; onClose: () => void }) {
+  const { patents, users, activeUsers, deactivateMember, userById } = useStore()
+  const u = userById(userId)
+  // 私有草案对 GL/PL 完全透明:这里只显示件数,不显示标题;指定接收人须由本人在个人中心提前转交
+  const allOwned = patents.filter((p) => p.ownerId === userId)
+  const owned = allOwned.filter((p) => p.visibility !== 'private')
+  const privateCount = allOwned.length - owned.length
+  const pendingReviews = patents.filter((p) => p.stageData.patentability.reviewers.some((r) => r.userId === userId && !r.score)).length
+  const pl = users.find((x) => x.role === 'pl' && x.teamId === u.teamId && x.id !== userId)
+  const [assign, setAssign] = useState<Record<string, string>>({})
+  const [all, setAll] = useState('')
+  const missing = owned.filter((p) => p.visibility !== 'private' && !assign[p.id]).length
+  const candidates = activeUsers.filter((x) => x.id !== userId)
+
+  return (
+    <Modal
+      title={`停用 ${u.name} · 离职交接`}
+      wide
+      onClose={onClose}
+      confirm={{
+        label: missing ? `还有 ${missing} 件未指定接收人` : '确认交接并停用',
+        tone: 'danger',
+        disabled: missing > 0,
+        onClick: () => { if (deactivateMember(userId, assign) === 'ok') onClose() },
+      }}
+    >
+      <ul className="mb-3 list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
+        <li>名下 {owned.length} 件非私有专利,必须逐件指定接收人。</li>
+        <li>
+          另有 {privateCount} 件私有草案(内容对你不可见)。本人可在个人中心「专利转交」中提前指定接收人;
+          停用时仍未转交的,将转为「团队可见」并交给本组 PL{pl ? `(${pl.name})` : ''}。
+        </li>
+        <li>停用后吊销其全部 API Token;撤销其 {pendingReviews} 个未提交的审查邀请,并通知相关发明人。</li>
+      </ul>
+      {owned.length > 0 && (
+        <>
+          <div className="mb-2 flex items-center gap-2 text-xs">
+            <span className="text-slate-500">一键全部交给</span>
+            <select
+              value={all}
+              onChange={(e) => {
+                setAll(e.target.value)
+                setAssign(Object.fromEntries(owned.map((p) => [p.id, e.target.value])))
+              }}
+              className="rounded-md border bg-white px-2 py-1 text-xs outline-none focus:border-teal-600"
+            >
+              <option value="">—</option>
+              {candidates.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div className="divide-y rounded-md border">
+            {owned.map((p) => (
+              <div key={p.id} className="flex items-center gap-2 px-3 py-2">
+                <span className="min-w-0 flex-1 truncate text-[13px]">{p.title}</span>
+                <VisibilityTag v={p.visibility} />
+                <StagePill stage={p.stage} />
+                <select
+                  value={assign[p.id] ?? ''}
+                  onChange={(e) => setAssign({ ...assign, [p.id]: e.target.value })}
+                  className={cn(
+                    'w-32 rounded-md border bg-white px-2 py-1 text-xs outline-none focus:border-teal-600',
+                    !assign[p.id] && 'border-red-300',
+                  )}
+                  aria-label={`${p.title} 的接收人`}
+                >
+                  <option value="">选择接收人…</option>
+                  {candidates.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Modal>
   )
 }

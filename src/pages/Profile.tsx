@@ -3,7 +3,10 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
 import { NOTIFY_EVENT_LABEL, type NotifyEvent, type Visibility } from '@/lib/types'
 import { SectionTitle } from '@/components/pf'
-import { Bell, Check, Copy, Eye, EyeOff, KeyRound, Plus, Trash2, UserRound } from 'lucide-react'
+import { ArrowRightLeft, Bell, Check, Copy, Eye, EyeOff, KeyRound, Plus, Trash2, UserRound } from 'lucide-react'
+import { StagePill, VisibilityTag } from '@/components/pf'
+import { teamById } from '@/lib/data'
+import type { ApiToken } from '@/lib/types'
 
 const inputCls =
   'mt-1.5 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none transition-shadow focus:border-teal-600 focus:ring-2 focus:ring-teal-600/20'
@@ -36,6 +39,7 @@ export default function Profile() {
   // Token 创建
   const [tkName, setTkName] = useState('')
   const [tkDays, setTkDays] = useState(90)
+  const [tkScope, setTkScope] = useState<ApiToken['scope']>('read')
   const [freshToken, setFreshToken] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [showTokens, setShowTokens] = useState(false)
@@ -46,6 +50,7 @@ export default function Profile() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <SectionTitle
+        page
         en="PROFILE"
         zh="个人中心"
         right={
@@ -143,10 +148,19 @@ export default function Profile() {
               <option value={90}>90 天有效</option>
               <option value={365}>1 年有效</option>
             </select>
+            <select
+              value={tkScope}
+              onChange={(e) => setTkScope(e.target.value as ApiToken['scope'])}
+              className="rounded-md border bg-white px-2.5 py-2 text-[13px] outline-none focus:border-teal-600"
+              aria-label="权限范围"
+            >
+              <option value="read">只读(GET)</option>
+              <option value="read-write">读写</option>
+            </select>
             <button
               type="button"
               disabled={!tkName.trim()}
-              onClick={() => { setFreshToken(createToken(tkName.trim(), tkDays)); setTkName(''); setCopied(false) }}
+              onClick={() => { setFreshToken(createToken(tkName.trim(), tkDays, tkScope)); setTkName(''); setCopied(false) }}
               className="flex items-center gap-1.5 rounded-md bg-teal-700 px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-40"
             >
               <Plus className="size-3.5" />
@@ -191,6 +205,9 @@ export default function Profile() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[13px] font-medium">{t.name}</span>
+                    <span className={cn('rounded px-1.5 py-px text-[10px]', t.scope === 'read' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-700')}>
+                      {t.scope === 'read' ? '只读' : '读写'}
+                    </span>
                     {t.revoked && <span className="rounded bg-red-50 px-1.5 py-px text-[10px] text-red-600">已吊销</span>}
                   </div>
                   <div className="mt-0.5 font-mono-x text-[11px] text-slate-400">
@@ -212,6 +229,8 @@ export default function Profile() {
           </div>
         </div>
       </section>
+
+      <BatchTransfer />
 
       {/* 通知偏好 */}
       <section>
@@ -296,5 +315,76 @@ export default function Profile() {
         </div>
       </section>
     </div>
+  )
+}
+
+// —— 批量转交:把我名下的专利一次性交给他人(调岗、离职前自助交接) ——
+function BatchTransfer() {
+  const { me, patents, activeUsers, batchTransfer, userById } = useStore()
+  const mine = patents.filter((p) => p.ownerId === me.id)
+  const [picked, setPicked] = useState<string[]>([])
+  const [to, setTo] = useState('')
+  const [keep, setKeep] = useState(true)
+  const [done, setDone] = useState('')
+  const toggle = (id: string) => setPicked((ps) => (ps.includes(id) ? ps.filter((x) => x !== id) : [...ps, id]))
+
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <ArrowRightLeft className="size-4 text-teal-700" />
+        专利转交
+      </h3>
+      <div className="rounded-lg border bg-card p-5">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          调岗或离职前,把名下专利交给接手的人。接收人成为负责人;团队归属不变;私有专利转交后仍为私有。
+        </p>
+        {mine.length === 0 ? (
+          <p className="mt-4 text-center text-xs text-muted-foreground">你名下没有专利</p>
+        ) : (
+          <>
+            <div className="mt-3 divide-y rounded-md border">
+              {mine.map((p) => (
+                <label key={p.id} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-slate-50">
+                  <input type="checkbox" checked={picked.includes(p.id)} onChange={() => toggle(p.id)} className="accent-teal-700" />
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{p.title}</span>
+                  <VisibilityTag v={p.visibility} />
+                  <StagePill stage={p.stage} />
+                </label>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="rounded-md border bg-white px-2.5 py-2 text-[13px] outline-none focus:border-teal-600"
+                aria-label="接收人"
+              >
+                <option value="">选择接收人…</option>
+                {activeUsers.filter((u) => u.id !== me.id).map((u) => (
+                  <option key={u.id} value={u.id}>{u.name} · {teamById(u.teamId).name}</option>
+                ))}
+              </select>
+              <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} className="accent-teal-700" />
+                我保留为共同发明人
+              </label>
+              <button
+                type="button"
+                disabled={!to || picked.length === 0}
+                onClick={() => {
+                  batchTransfer(picked.map((id) => ({ patentId: id, toUserId: to })), keep)
+                  setDone(`已将 ${picked.length} 件专利转交给 ${userById(to).name}`)
+                  setPicked([])
+                }}
+                className="ml-auto rounded-md bg-[#12141f] px-4 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+              >
+                转交 {picked.length || ''} 件
+              </button>
+            </div>
+            {done && <p className="mt-2 text-xs text-teal-700">{done}</p>}
+          </>
+        )}
+      </div>
+    </section>
   )
 }
