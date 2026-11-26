@@ -135,6 +135,9 @@ async def rollback(ctx: Ctx, pid: str, to: str, reason: str, rev: int | None = N
     skipped = STAGE_KEYS[stage_index(to) + 1: stage_index(p["stage"]) + 1]
     recheck = list(dict.fromkeys([*p["needsRecheck"], *skipped]))
     await void_pending_extensions(ctx, pid)
+    if to == "patentability":
+        # 从后续阶段回到审查:上一轮已通过并结束,不能沿用旧票,开启新一轮(名单继承、分数清零)
+        await next_round(ctx, p, "superseded")
     await bump(ctx, pid, rev, stage=to, needs_recheck=recheck)
     await add_transition(ctx, pid, p["stage"], to, "rollback", reason.strip())
     p["stage"] = to

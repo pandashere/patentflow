@@ -74,7 +74,9 @@ async def notify(
     only: Iterable[str] | None = None,
     security: bool = False,
     include_actor: bool = False,
+    external_text: str | None = None,
 ) -> list[str]:
+    """external_text:仅投递到外部渠道的正文(含一次性链接等凭据),站内只存 text。"""
     """分发一条通知,返回实际站内收件人 id 列表。"""
     if only is not None:
         ids = list(only)
@@ -103,7 +105,7 @@ async def notify(
         )
     if external:
         ctx.outbox.append({
-            "event": event, "text": text, "patentId": pid, "at": now(), "security": security,
+            "event": event, "text": external_text or text, "patentId": pid, "at": now(), "security": security,
             "recipients": [{"id": u["id"], "name": u["name"], "email": u["email"]} for u in external],
         })
     return [u["id"] for u in inbox]

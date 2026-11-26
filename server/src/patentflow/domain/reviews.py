@@ -23,7 +23,9 @@ def weighted(score: dict[str, Any], cfg: dict[str, Any]) -> float:
 
 
 def _active(p: dict[str, Any]) -> list[dict[str, Any]]:
-    return [r for r in p["stageData"]["patentability"]["reviewers"] if not r.get("declined")]
+    # 门禁只统计未拒绝、且不是当前负责人的 reviewer(转交给 reviewer 后其票作废,决策 32)
+    return [r for r in p["stageData"]["patentability"]["reviewers"]
+            if not r.get("declined") and r["userId"] != p["ownerId"]]
 
 
 def rejected(p: dict[str, Any]) -> bool:
@@ -55,8 +57,9 @@ async def next_round(ctx: Ctx, p: dict[str, Any], outcome: str) -> bool:
         """INSERT INTO review_assignments(patent_id, round, user_id, invited_by, invited_at, due_date)
            SELECT a.patent_id, ?, a.user_id, a.invited_by, ?, ? FROM review_assignments a
            JOIN users u ON u.id = a.user_id
-           WHERE a.patent_id = ? AND a.round = ? AND a.declined_at IS NULL AND u.deactivated_at IS NULL""",
-        (rnd + 1, now(), due, p["id"], rnd),
+           WHERE a.patent_id = ? AND a.round = ? AND a.declined_at IS NULL AND u.deactivated_at IS NULL
+             AND a.user_id != ?""",
+        (rnd + 1, now(), due, p["id"], rnd, p["ownerId"]),
     )
     await ctx.conn.execute("UPDATE patents SET review_round = ? WHERE id = ?", (rnd + 1, p["id"]))
     return True
@@ -132,6 +135,8 @@ async def submit(ctx: Ctx, pid: str, score: dict[str, Any]) -> None:
     r = next((r for r in p["stageData"]["patentability"]["reviewers"] if r["userId"] == ctx.me["id"]), None)
     if not r or r.get("declined"):
         raise forbidden("你不在本轮审查名单中")
+    if ctx.me["id"] == p["ownerId"]:
+        raise forbidden("你已是该专利的负责人,不能审查自己的专利")
     verdict = score.get("verdict")
     if verdict not in ("pass", "reject"):
         raise bad_request("verdict 必须是 pass 或 reject")

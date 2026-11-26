@@ -79,6 +79,9 @@ async def reports_for(db: Database, me: dict[str, Any], rules: list[dict[str, An
                    "fullyAchieved": sum(1 for i in items if i["score"] == 1)}
         else:
             rep = kpi.compute(rule, patents, transitions, cycles, cfg)
+        # 收口快照可能含后来改回私有的草案:当前私有且对我不可见的明细一律剔除(决策 9)
+        hidden_private = {p["id"] for p in patents if p["visibility"] == "private" and p["id"] not in visible}
+        rep = {**rep, "items": [i for i in rep["items"] if i["patentId"] not in hidden_private]}
         out[rule["id"]] = rep if me["role"] == "gl" else kpi.redact(rep, visible)
     return out
 
@@ -124,7 +127,5 @@ async def save_cycle(body: CycleIn, request: Request, auth: Auth = Depends(curre
 @router.post("/cycles/{cid}/close")
 async def close_cycle(cid: str, request: Request, auth: Auth = Depends(current_auth),
                       db: Database = Depends(get_db)) -> dict[str, Any]:
-    patents = await load_patents(db.reader)  # type: ignore[arg-type]
-    transitions = await load_transitions(db.reader)  # type: ignore[arg-type]
-    n = await run(request, auth, lambda ctx: kpi.close_cycle(ctx, cid, patents, transitions))
+    n = await run(request, auth, lambda ctx: kpi.close_cycle(ctx, cid))
     return {"frozenRules": n}

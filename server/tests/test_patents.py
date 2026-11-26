@@ -105,8 +105,8 @@ def test_decline_and_withdraw(client) -> None:  # type: ignore[no-untyped-def]
     p = client.delete(f"/api/patents/{pid}/reviewers/r2", headers=H("u1")).json()
     revs = {r["userId"]: r for r in p["stageData"]["patentability"]["reviewers"]}
     assert set(revs) == {"r1", "r3"} and revs["r3"]["declined"]["reason"] == "领域不符"
-    # 拒绝者不能再打分
-    assert client.post(f"/api/patents/{pid}/reviews", json=score(), headers=H("r3")).status_code == 403
+    # 拒绝者(外组)不再拥有 reviewer 例外通道:不可见也不能打分
+    assert client.post(f"/api/patents/{pid}/reviews", json=score(), headers=H("r3")).status_code == 404
 
 
 def test_multi_rollback_recheck_and_private_lock(client) -> None:  # type: ignore[no-untyped-def]

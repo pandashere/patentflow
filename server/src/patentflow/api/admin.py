@@ -340,7 +340,10 @@ def notification_json(r: Any) -> dict[str, Any]:
 @router.get("/notifications")
 async def notifications(auth: Auth = Depends(current_auth), db: Database = Depends(get_db)) -> list[dict[str, Any]]:
     rows = await db.all("SELECT * FROM notifications WHERE user_id = ? ORDER BY at DESC, rowid DESC LIMIT 200", (auth.id,))
-    return [notification_json(r) for r in rows]
+    # 关联专利当前对我不可见(如已改回私有)的通知不再返回(决策 9)
+    pids = {r["patent_id"] for r in rows if r["patent_id"]}
+    visible = {p["id"] for p in await load_patents(db.reader, pids) if access.can_see(auth.user, p)}  # type: ignore[arg-type]
+    return [notification_json(r) for r in rows if not r["patent_id"] or r["patent_id"] in visible]
 
 
 @router.post("/notifications/read-all")

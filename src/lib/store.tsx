@@ -323,10 +323,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const qualifiedPass = (s: ReviewScore | null) =>
     s?.verdict === 'pass' && weightedScore(s, config) >= config.reviewMinWeighted
-  const reviewPassCount = (p: Patent) =>
-    p.stageData.patentability.reviewers.filter((r) => !r.declined && qualifiedPass(r.score)).length
-  const reviewRejected = (p: Patent) =>
-    p.stageData.patentability.reviewers.some((r) => !r.declined && r.score?.verdict === 'reject')
+  // 与后端一致:门禁只统计未拒绝、且不是当前负责人的 reviewer
+  const gateReviewers = (p: Patent) =>
+    p.stageData.patentability.reviewers.filter((r) => !r.declined && r.userId !== p.ownerId)
+  const reviewPassCount = (p: Patent) => gateReviewers(p).filter((r) => qualifiedPass(r.score)).length
+  const reviewRejected = (p: Patent) => gateReviewers(p).some((r) => r.score?.verdict === 'reject')
   const reviewGateOpen = (p: Patent) => !reviewRejected(p) && reviewPassCount(p) >= config.reviewPassCount
   const hasLeftDraft = (p: Patent) =>
     p.stage !== 'draft' || transitions.some((t) => t.patentId === p.id && t.from === 'draft' && t.to !== 'draft')
@@ -419,8 +420,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     hasLeftDraft, canDeletePatent, activeUsers: users.filter((u) => !u.deactivated),
 
     saveStageData: (pid, stage, data, note) => saveStage(pid, stage, data, note, latestVersion(pid, stage)),
-    advance: async (pid, reason) => { await act(() => api.post(`${P(pid)}/advance`, { reason })) },
-    rollback: async (pid, to, reason) => { await act(() => api.post(`${P(pid)}/rollback`, { to, reason })) },
+    // 携带打开确认框时的 rev:他人已先推进/回退则返回 409,避免一次确认连跳两个阶段
+    advance: async (pid, reason) => {
+      const rev = patents.find((p) => p.id === pid)?.rev
+      await act(() => api.post(`${P(pid)}/advance`, { reason, rev }))
+    },
+    rollback: async (pid, to, reason) => {
+      const rev = patents.find((p) => p.id === pid)?.rev
+      await act(() => api.post(`${P(pid)}/rollback`, { to, reason, rev }))
+    },
     inviteReviewer: async (pid, userId) => { await act(() => api.post(`${P(pid)}/reviewers`, { userId })) },
     withdrawReviewer: async (pid, uid) => { await act(() => api.del(`${P(pid)}/reviewers/${uid}`)) },
     declineReview: async (pid, reason) => { await act(() => api.post(`${P(pid)}/reviewers/me/decline`, { reason })) },

@@ -181,8 +181,9 @@ async def reset_password(uid: str, body: ResetIn, request: Request, admin: str =
                 "INSERT INTO password_resets(token_hash, user_id, created_at, expires_at) VALUES(?,?,?,?)",
                 (sha256(token), uid, now(), _fmt(now_dt() + timedelta(minutes=settings.reset_token_ttl_minutes))))
             await ctx.conn.execute("UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?", (uid,))
-            await notify(ctx, "transition", f"系统管理员为你发起了密码重置(30 分钟内有效):{link}",
-                         only=[uid], security=True, include_actor=True)
+            await notify(ctx, "transition", "系统管理员为你发起了密码重置,链接已发送到你的邮箱 / IM(30 分钟内有效)",
+                         only=[uid], security=True, include_actor=True,
+                         external_text=f"系统管理员为你发起了密码重置(30 分钟内有效):{link}")
             out["link"] = link
         await ctx.conn.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
         await audit(ctx.conn, request, admin, f"reset_password:{body.mode}", u["email"])

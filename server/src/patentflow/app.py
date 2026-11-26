@@ -78,12 +78,15 @@ def create_app(settings: Settings | None = None, notifier: Notifier | None = Non
 
     # 生产部署:同源托管前端构建产物(SPA 回退到 index.html)
     if settings.static_dir and Path(settings.static_dir).is_dir():
-        static = Path(settings.static_dir)
+        static = Path(settings.static_dir).resolve()
         app.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str) -> FileResponse:
-            f = static / path
-            return FileResponse(f if path and f.is_file() else static / "index.html")
+            f = (static / path).resolve()
+            # 只返回发布目录内的文件,其余(含 ../ 穿越)一律回退到 index.html
+            if path and f.is_file() and f.is_relative_to(static):
+                return FileResponse(f)
+            return FileResponse(static / "index.html")
 
     return app

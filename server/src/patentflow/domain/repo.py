@@ -83,14 +83,17 @@ async def load_patents(conn: aiosqlite.Connection, ids: Iterable[str] | None = N
         for r in await cur.fetchall():
             data[r["patent_id"]][r["stage"]] = loads(r["data"])
 
+    current_round = {r["id"]: r["review_round"] for r in rows}
     async with conn.execute(
         f"SELECT * FROM review_assignments WHERE patent_id IN ({ph}) ORDER BY invited_at, user_id", pids
     ) as cur:
         assigns: dict[tuple[str, int], list] = defaultdict(list)
-        all_reviewers: dict[str, set[str]] = defaultdict(set)
+        # reviewer 例外通道:只认当前轮、未拒绝的邀请(被撤销 / 未继承的往轮 reviewer 不再可见)
+        active_reviewers: dict[str, set[str]] = defaultdict(set)
         for r in await cur.fetchall():
             assigns[(r["patent_id"], r["round"])].append(_assignment(r))
-            all_reviewers[r["patent_id"]].add(r["user_id"])
+            if r["round"] == current_round[r["patent_id"]] and not r["declined_at"]:
+                active_reviewers[r["patent_id"]].add(r["user_id"])
 
     async with conn.execute(f"SELECT * FROM review_rounds WHERE patent_id IN ({ph}) ORDER BY round", pids) as cur:
         rounds: dict[str, list] = defaultdict(list)
@@ -129,7 +132,7 @@ async def load_patents(conn: aiosqlite.Connection, ids: Iterable[str] | None = N
             "dueDates": loads(r["due_dates"], {}), "extensions": exts.get(pid, []),
             "stageData": sd, "notify": loads(r["notify"], []),
             "needsRecheck": loads(r["needs_recheck"], []), "rev": r["rev"],
-            "_reviewerIds": all_reviewers.get(pid, set()),
+            "_reviewerIds": active_reviewers.get(pid, set()),
         })
     return out
 

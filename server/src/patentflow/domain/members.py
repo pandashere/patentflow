@@ -62,8 +62,9 @@ async def add_member(ctx: Ctx, m: dict[str, Any], base_url: str) -> tuple[str, s
         (uid, name, email, str(m.get("title", "")).strip(), role, team["id"], now()),
     )
     link = await issue_password_link(ctx.conn, uid, base_url, ACTIVATION_TTL_MINUTES)
-    await notify(ctx, "transition", f"{ctx.me['name']} 为你开通了 PATENTFLOW 账号({team['name']}),"
-                 f"请在 7 天内设置密码:{link}", only=[uid], security=True)
+    await notify(ctx, "transition", f"{ctx.me['name']} 为你开通了 PATENTFLOW 账号({team['name']})",
+                 only=[uid], security=True,
+                 external_text=f"{ctx.me['name']} 为你开通了 PATENTFLOW 账号({team['name']}),请在 7 天内设置密码:{link}")
     return uid, link
 
 
@@ -263,8 +264,10 @@ async def deactivate(ctx: Ctx, uid: str, assignments: dict[str, str]) -> dict[st
     missing = [p["id"] for p in owned if p["visibility"] != "private" and p["id"] not in assignments]
     if missing:
         raise bad_request(f"还有 {len(missing)} 件非私有专利未指定接收人", code="unassigned", patentIds=missing)
+    # 私有草案未由本人转交的,交给团队现任 PL(teams.pl_id);PL 空缺或就是本人时交给执行停用的 GL
     async with ctx.conn.execute(
-        "SELECT id FROM users WHERE role='pl' AND team_id=? AND id != ? AND deactivated_at IS NULL ORDER BY id LIMIT 1",
+        """SELECT u.id FROM teams t JOIN users u ON u.id = t.pl_id
+           WHERE t.id = ? AND u.id != ? AND u.deactivated_at IS NULL""",
         (u["team_id"], uid),
     ) as cur:
         pl = await cur.fetchone()

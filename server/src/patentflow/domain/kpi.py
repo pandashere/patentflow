@@ -188,8 +188,11 @@ async def save_cycle(ctx: Ctx, c: dict[str, Any]) -> str:
     return cid
 
 
-async def close_cycle(ctx: Ctx, cid: str, patents: list[dict[str, Any]], transitions: list[dict[str, Any]]) -> int:
-    """收口:周期关闭,绑定该周期的启用规则冻结为快照,之后不再随流转变化。"""
+async def close_cycle(ctx: Ctx, cid: str) -> int:
+    """收口:周期关闭,绑定该周期的启用规则冻结为快照,之后不再随流转变化。
+    专利与流转在同一写事务内读取,避免漏记收口前刚提交的进展。"""
+    from .repo import load_patents, load_transitions
+
     if ctx.me["role"] != "gl":
         raise forbidden("仅 GL 可收口周期")
     async with ctx.conn.execute("SELECT * FROM cycles WHERE id = ?", (cid,)) as cur:
@@ -202,6 +205,8 @@ async def close_cycle(ctx: Ctx, cid: str, patents: list[dict[str, Any]], transit
         cycles = [cycle_json(r) for r in await cur.fetchall()]
     async with ctx.conn.execute("SELECT * FROM kpi_rules WHERE cycle_id = ? AND enabled = 1", (cid,)) as cur:
         rules = [rule_json(r) for r in await cur.fetchall()]
+    patents = await load_patents(ctx.conn)
+    transitions = await load_transitions(ctx.conn)
     for rule in rules:
         rep = compute(rule, patents, transitions, cycles, ctx.cfg)
         await ctx.conn.execute(

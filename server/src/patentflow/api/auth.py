@@ -96,8 +96,9 @@ async def forgot(body: ForgotIn, request: Request, db: Database = Depends(get_db
                 (sha256(token), row["id"], now(),
                  _fmt(now_dt() + timedelta(minutes=settings.reset_token_ttl_minutes))),
             )
-            await notify(ctx, "transition", f"PATENTFLOW 密码重置链接(30 分钟内有效):{link}",
-                         only=[row["id"]], security=True, include_actor=True)
+            await notify(ctx, "transition", "你申请了重置密码,重置链接已发送到你的邮箱 / IM(30 分钟内有效)",
+                         only=[row["id"]], security=True, include_actor=True,
+                         external_text=f"PATENTFLOW 密码重置链接(30 分钟内有效):{link}")
         if settings.demo:
             out["demoLink"] = link  # 演示模式直接回显;生产由 webhook/邮件适配器投递
     return out

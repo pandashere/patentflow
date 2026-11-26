@@ -42,7 +42,7 @@ async def bump(ctx: Ctx, pid: str, expected_rev: int | None = None, **cols: Any)
         params.append(expected_rev)
     cur = await ctx.conn.execute(sql, params)
     if cur.rowcount == 0:
-        raise conflict("该专利已被他人修改,请刷新后重试", reason="stale_rev")
+        raise conflict("该专利刚被他人修改(例如已推进或回退),页面已刷新,请确认当前状态后再操作", reason="stale_rev")
 
 
 async def add_transition(ctx: Ctx, pid: str, frm: str | None, to: str, kind: str, reason: str) -> None:
