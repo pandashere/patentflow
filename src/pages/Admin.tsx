@@ -8,7 +8,7 @@ import {
 } from '@/lib/types'
 import { SectionTitle, StagePill, ToneTag, VisibilityTag } from '@/components/pf'
 import { Modal } from './PatentDetail'
-import { Download, Link2, ShieldCheck, UserMinus, UserPlus, Webhook } from 'lucide-react'
+import { Download, Link2, Plus, ShieldCheck, UserMinus, UserPlus, Webhook } from 'lucide-react'
 
 const ROLE_STYLE: Record<Role, string> = {
   user: 'bg-slate-100 text-slate-600',
@@ -21,7 +21,7 @@ const inputCls =
 
 export default function Admin() {
   const {
-    me, config, setConfig, users, updateMember, addMember,
+    me, config, setConfig, users, updateMember,
     tokens, adminRevokeToken,
     cycles, saveCycle, closeCycle, reactivateMember,
   } = useStore()
@@ -29,8 +29,6 @@ export default function Admin() {
   const isGl = me.role === 'gl'
   const myTeamUsers = users.filter((u) => me.role === 'gl' || u.teamId === me.teamId)
 
-  const [adding, setAdding] = useState(false)
-  const [newbie, setNew] = useState({ name: '', email: '', title: '', teamId: TEAMS[0]?.id ?? '', role: 'user' as Role })
   const [exported, setExported] = useState('')
   const [newCycle, setNewCycle] = useState({ name: '', start: '', end: '' })
 
@@ -59,60 +57,16 @@ export default function Admin() {
         }
       />
 
+      <PendingRegistrations />
+
+      <TeamsPanel />
+
       {/* 成员与角色 */}
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">成员与角色</h3>
-          {isGl && (
-            <button
-              type="button"
-              onClick={() => setAdding((v) => !v)}
-              className="flex items-center gap-1.5 rounded-md bg-[#12141f] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
-            >
-              <UserPlus className="size-3.5" />
-              添加成员
-            </button>
-          )}
+          <AddMemberButton />
         </div>
-
-        {adding && (
-          <div className="mb-3 flex flex-wrap items-end gap-2 rounded-lg border border-teal-200 bg-teal-50/50 p-4">
-            <label className="block">
-              <span className="ui-label text-slate-500">姓名</span>
-              <input value={newbie.name} onChange={(e) => setNew({ ...newbie, name: e.target.value })} className={cn(inputCls, 'mt-1 w-28')} />
-            </label>
-            <label className="block">
-              <span className="ui-label text-slate-500">邮箱</span>
-              <input value={newbie.email} onChange={(e) => setNew({ ...newbie, email: e.target.value })} placeholder="name@corp.local" className={cn(inputCls, 'mt-1 w-44')} />
-            </label>
-            <label className="block">
-              <span className="ui-label text-slate-500">职位</span>
-              <input value={newbie.title} onChange={(e) => setNew({ ...newbie, title: e.target.value })} placeholder="工程师" className={cn(inputCls, 'mt-1 w-32')} />
-            </label>
-            <label className="block">
-              <span className="ui-label text-slate-500">团队</span>
-              <select value={newbie.teamId} onChange={(e) => setNew({ ...newbie, teamId: e.target.value })} className={cn(inputCls, 'mt-1')} aria-label="团队">
-                {TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </label>
-            <label className="block">
-              <span className="ui-label text-slate-500">角色</span>
-              <select value={newbie.role} onChange={(e) => setNew({ ...newbie, role: e.target.value as Role })} className={cn(inputCls, 'mt-1')} aria-label="角色">
-                <option value="user">普通用户</option>
-                <option value="pl">PL</option>
-                <option value="gl">GL</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              disabled={!newbie.name.trim() || !newbie.email.trim()}
-              onClick={() => { addMember({ ...newbie, name: newbie.name.trim(), email: newbie.email.trim() }); setAdding(false); setNew({ name: '', email: '', title: '', teamId: TEAMS[0]?.id ?? '', role: 'user' }) }}
-              className="rounded-md bg-teal-700 px-4 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40"
-            >
-              确认添加
-            </button>
-          </div>
-        )}
 
         <div className="overflow-hidden rounded-lg border bg-card">
           <table className="w-full text-sm">
@@ -637,20 +591,7 @@ export default function Admin() {
               ))}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3 border-t pt-4">
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium">Webhook 回调地址</div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                通知事件将以 POST + 签名头发送到该地址;个人可在「个人中心」订阅/屏蔽事件
-              </div>
-            </div>
-            <input
-              value={config.webhookUrl}
-              disabled={!isGl}
-              onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
-              className={cn(inputCls, 'w-full max-w-sm font-mono-x text-xs')}
-            />
-          </div>
+          <WebhookField />
           <div className="rounded-md border border-dashed bg-slate-50/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-600">
             <strong>账号安全事件</strong>(忘记密码的重置链接)经同一 webhook 回调投递,由邮件/IM 适配器送达本人:
             <strong>强制送达</strong>,不受个人订阅与免打扰影响;链接带一次性 token,30 分钟有效、用后作废;
@@ -847,5 +788,407 @@ function OffboardDialog({ userId, onClose }: { userId: string; onClose: () => vo
         </>
       )}
     </Modal>
+  )
+}
+
+// —— 待审批注册:GL 看全部,PL 看本组;GL 审批时可调整团队与角色 ——
+function PendingRegistrations() {
+  const { pendingRegistrations, approveRegistration, rejectRegistration, me, teams } = useStore()
+  const [patch, setPatch] = useState<Record<string, { teamId: string; role: Role }>>({})
+  const [rejecting, setRejecting] = useState<string | null>(null)
+  const [reason, setReason] = useState('')
+  if (pendingRegistrations.length === 0) return null
+  const isGl = me.role === 'gl'
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        待审批的注册
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">{pendingRegistrations.length}</span>
+      </h3>
+      <div className="divide-y rounded-lg border border-amber-200 bg-amber-50/30">
+        {pendingRegistrations.map((u) => {
+          const p = patch[u.id] ?? { teamId: u.teamId, role: 'user' as Role }
+          return (
+            <div key={u.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">
+                  {u.name}
+                  {u.title && <span className="ml-2 text-xs font-normal text-muted-foreground">{u.title}</span>}
+                </div>
+                <div className="font-mono-x text-[11px] text-slate-500">{u.email} · 申请于 {u.pending?.at}</div>
+              </div>
+              {isGl ? (
+                <>
+                  <select value={p.teamId} onChange={(e) => setPatch({ ...patch, [u.id]: { ...p, teamId: e.target.value } })} className={cn(inputCls, 'py-1 text-xs')} aria-label="团队">
+                    {teams.map((t) => <option key={t.id} value={t.id}>{t.name}{t.id === u.teamId ? '(申请)' : ''}</option>)}
+                  </select>
+                  <select value={p.role} onChange={(e) => setPatch({ ...patch, [u.id]: { ...p, role: e.target.value as Role } })} className={cn(inputCls, 'py-1 text-xs')} aria-label="角色">
+                    <option value="user">普通用户</option>
+                    <option value="pl">PL</option>
+                    <option value="gl">GL</option>
+                  </select>
+                </>
+              ) : (
+                <span className="text-xs text-slate-500">申请加入「{teamName(u.teamId)}」</span>
+              )}
+              {rejecting === u.id ? (
+                <span className="flex items-center gap-1.5">
+                  <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="原因(会告知对方)" className={cn(inputCls, 'w-44 py-1 text-xs')} />
+                  <button type="button" onClick={() => { rejectRegistration(u.id, reason); setRejecting(null); setReason('') }} className="rounded-md border border-red-300 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50">确认拒绝</button>
+                  <button type="button" onClick={() => setRejecting(null)} className="text-xs text-slate-400">取消</button>
+                </span>
+              ) : (
+                <span className="flex gap-1.5">
+                  <button type="button" onClick={() => approveRegistration(u.id, isGl ? p : {})} className="rounded-md bg-teal-700 px-3 py-1 text-xs font-medium text-white hover:opacity-90">通过</button>
+                  <button type="button" onClick={() => { setRejecting(u.id); setReason('') }} className="rounded-md border px-3 py-1 text-xs text-slate-600 hover:bg-slate-50">拒绝</button>
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">通过后对方会收到通知,即可用注册时设置的密码登录。</p>
+    </section>
+  )
+}
+
+// —— 添加成员:必须选团队;PL 只能向本组添加普通用户。成功后显示一次激活链接 ——
+function AddMemberButton() {
+  const { me, teams, addMember, canManageTeam, config } = useStore()
+  const manageable = teams.filter((t) => canManageTeam(t.id))
+  const [open, setOpen] = useState(false)
+  const [m, setM] = useState({ name: '', email: '', title: '', teamId: '', role: 'user' as Role })
+  const [link, setLink] = useState<{ name: string; url: string } | null>(null)
+  if (manageable.length === 0) {
+    return me.role === 'pl' && !config.members.plCanManage
+      ? <span className="text-xs text-muted-foreground">GL 已收回 PL 的添加成员权限</span>
+      : null
+  }
+  const isGl = me.role === 'gl'
+  const teamId = m.teamId || (isGl ? '' : manageable[0].id)
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => { setOpen(true); setM({ name: '', email: '', title: '', teamId: isGl ? '' : manageable[0].id, role: 'user' }) }}
+        className="flex items-center gap-1.5 rounded-md bg-[#12141f] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+      >
+        <UserPlus className="size-3.5" />
+        添加成员
+      </button>
+      {open && (
+        <Modal
+          title="添加成员"
+          onClose={() => setOpen(false)}
+          confirm={{
+            label: '添加并发送激活链接', tone: 'dark',
+            disabled: !m.name.trim() || !m.email.includes('@') || !teamId,
+            onClick: async () => {
+              const url = await addMember({ ...m, teamId, name: m.name.trim(), email: m.email.trim() })
+              if (url) { setOpen(false); setLink({ name: m.name.trim(), url }) }
+            },
+          }}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="ui-label text-slate-500">姓名</span>
+              <input autoFocus value={m.name} onChange={(e) => setM({ ...m, name: e.target.value })} className={cn(inputCls, 'mt-1 w-full')} />
+            </label>
+            <label className="block">
+              <span className="ui-label text-slate-500">职位(可选)</span>
+              <input value={m.title} onChange={(e) => setM({ ...m, title: e.target.value })} placeholder="工程师" className={cn(inputCls, 'mt-1 w-full')} />
+            </label>
+            <label className="col-span-2 block">
+              <span className="ui-label text-slate-500">邮箱(登录账号)</span>
+              <input value={m.email} onChange={(e) => setM({ ...m, email: e.target.value })} placeholder="name@corp.local" className={cn(inputCls, 'mt-1 w-full')} />
+            </label>
+            <label className="block">
+              <span className="ui-label text-slate-500">团队</span>
+              {isGl ? (
+                <select value={m.teamId} onChange={(e) => setM({ ...m, teamId: e.target.value })} className={cn(inputCls, 'mt-1 w-full')}>
+                  <option value="">选择团队…</option>
+                  {manageable.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              ) : (
+                <div className="mt-1 rounded-md border bg-slate-50 px-2.5 py-1.5 text-[13px] text-slate-600">{teamName(teamId)}(本组)</div>
+              )}
+            </label>
+            <label className="block">
+              <span className="ui-label text-slate-500">角色</span>
+              {isGl ? (
+                <select value={m.role} onChange={(e) => setM({ ...m, role: e.target.value as Role })} className={cn(inputCls, 'mt-1 w-full')}>
+                  <option value="user">普通用户</option>
+                  <option value="pl">PL</option>
+                  <option value="gl">GL</option>
+                </select>
+              ) : (
+                <div className="mt-1 rounded-md border bg-slate-50 px-2.5 py-1.5 text-[13px] text-slate-600">普通用户</div>
+              )}
+            </label>
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            对方会收到一条带激活链接的通知(7 天内有效),点开后自行设置密码。
+            {isGl && m.role === 'pl' && ' 如需让 TA 成为某个团队的负责人,请在「团队」里指定。'}
+          </p>
+        </Modal>
+      )}
+      {link && (
+        <Modal title={`已添加 ${link.name}`} onClose={() => setLink(null)} confirm={{ label: '完成', tone: 'dark', onClick: () => setLink(null) }}>
+          <p className="text-[13px] text-slate-600">激活链接已经通过通知发给对方。如果对方没收到,可以把下面的链接直接转给 TA(7 天内有效,只显示这一次):</p>
+          <code className="mt-2 block break-all rounded-md border bg-slate-50 px-3 py-2 font-mono-x text-xs">{link.url}</code>
+          <button type="button" onClick={() => navigator.clipboard?.writeText(link.url)} className="mt-2 text-xs text-teal-700 hover:underline">复制链接</button>
+        </Modal>
+      )}
+    </>
+  )
+}
+
+// —— 团队:GL 新建 / 改名 / 删除,指定或更换 PL;PL 只读 ——
+function TeamsPanel() {
+  const { me, teams, users, patents, createTeam, renameTeam, deleteTeam, config, setConfig, userById } = useStore()
+  const isGl = me.role === 'gl'
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [plFor, setPlFor] = useState<string | null>(null)
+  const active = users.filter((u) => !u.deactivated)
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">团队</h3>
+        {isGl && !creating && (
+          <button type="button" onClick={() => { setCreating(true); setNewName('') }} className="flex items-center gap-1.5 rounded-md border bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50">
+            <Plus className="size-3.5" />
+            新建团队
+          </button>
+        )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {teams.map((t) => {
+          const members = active.filter((u) => u.teamId === t.id)
+          const teamPatents = patents.filter((p) => p.teamId === t.id).length
+          const pl = t.plId ? userById(t.plId) : null
+          return (
+            <div key={t.id} className="rounded-lg border bg-card p-4">
+              <div className="flex items-center gap-2">
+                {editing === t.id ? (
+                  <input
+                    autoFocus value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onBlur={() => { if (editName.trim() && editName.trim() !== t.name) renameTeam(t.id, editName.trim()); setEditing(null) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(null) }}
+                    className={cn(inputCls, 'min-w-0 flex-1 py-1')}
+                  />
+                ) : (
+                  <button
+                    type="button" disabled={!isGl}
+                    onClick={() => { setEditing(t.id); setEditName(t.name) }}
+                    title={isGl ? '点击改名' : undefined}
+                    className="min-w-0 flex-1 truncate text-left text-sm font-semibold enabled:hover:text-teal-700"
+                  >
+                    {t.name}
+                  </button>
+                )}
+                <span className="text-[11px] text-muted-foreground">{members.length} 人</span>
+              </div>
+              <div className="mt-2.5 flex items-center gap-2 text-[13px]">
+                <span className="text-xs text-slate-400">PL</span>
+                {pl ? (
+                  <span className="font-medium">{pl.name}</span>
+                ) : (
+                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">空缺</span>
+                )}
+                {isGl && (
+                  <button type="button" onClick={() => setPlFor(t.id)} className="ml-auto text-xs text-teal-700 hover:underline">
+                    {pl ? '更换' : '指定'}
+                  </button>
+                )}
+              </div>
+              {isGl && members.length === 0 && teamPatents === 0 && (
+                <button type="button" onClick={() => deleteTeam(t.id)} className="mt-2 text-[11px] text-slate-400 hover:text-red-600">删除空团队</button>
+              )}
+            </div>
+          )
+        })}
+        {creating && (
+          <div className="rounded-lg border-2 border-dashed border-teal-300 bg-teal-50/30 p-4">
+            <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="团队名称" className={cn(inputCls, 'w-full')} />
+            <p className="mt-2 text-[11px] text-muted-foreground">创建后可随时指定 PL。</p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button" disabled={!newName.trim()}
+                onClick={async () => { if (await createTeam(newName.trim(), null, true)) setCreating(false) }}
+                className="rounded-md bg-[#12141f] px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
+              >
+                创建
+              </button>
+              <button type="button" onClick={() => setCreating(false)} className="text-xs text-slate-500">取消</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {isGl && (
+        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 rounded-lg border bg-card px-4 py-3">
+          <MiniSwitch
+            label="开放自助注册"
+            hint="新人可在登录页注册并选择团队,经审批后才能登录"
+            on={config.members.selfRegistration}
+            onChange={(v) => setConfig({ ...config, members: { ...config.members, selfRegistration: v } })}
+          />
+          <MiniSwitch
+            label="PL 可添加本组成员、审批本组注册"
+            hint="关闭后仅 GL 与系统管理员可以"
+            on={config.members.plCanManage}
+            onChange={(v) => setConfig({ ...config, members: { ...config.members, plCanManage: v } })}
+          />
+        </div>
+      )}
+
+      {plFor && <ChangePlDialog teamId={plFor} onClose={() => setPlFor(null)} />}
+    </section>
+  )
+}
+
+function MiniSwitch({ label, hint, on, onChange }: { label: string; hint: string; on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2.5" title={hint}>
+      <button
+        type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
+        className={cn('relative h-5 w-9 shrink-0 rounded-full transition-colors', on ? 'bg-teal-600' : 'bg-slate-300')}
+      >
+        <span className={cn('absolute top-0.5 size-4 rounded-full bg-white shadow transition-all', on ? 'left-[18px]' : 'left-0.5')} />
+      </button>
+      <span>
+        <span className="block text-[13px] font-medium">{label}</span>
+        <span className="block text-[11px] text-muted-foreground">{hint}</span>
+      </span>
+    </label>
+  )
+}
+
+// —— 更换 PL:把影响说清楚再确认 ——
+function ChangePlDialog({ teamId, onClose }: { teamId: string; onClose: () => void }) {
+  const { teams, activeUsers, userById, setTeamPl } = useStore()
+  const team = teams.find((t) => t.id === teamId)!
+  const [to, setTo] = useState<string>('')
+  const [keepOld, setKeepOld] = useState(false)
+  const old = team.plId ? userById(team.plId) : null
+  const cand = to ? userById(to) : null
+  const leadsOther = cand ? teams.find((t) => t.plId === cand.id && t.id !== teamId) : undefined
+  const oldLeadsOther = old ? teams.some((t) => t.plId === old.id && t.id !== teamId) : false
+  const same = activeUsers.filter((u) => u.teamId === teamId && u.id !== team.plId)
+  const others = activeUsers.filter((u) => u.teamId !== teamId && u.id !== team.plId)
+
+  return (
+    <Modal
+      title={`${old ? '更换' : '指定'}「${team.name}」的 PL`}
+      onClose={onClose}
+      confirm={{
+        label: to === '__none' ? '撤销 PL' : '确认', tone: 'dark',
+        disabled: !to || !!leadsOther,
+        onClick: async () => { if (await setTeamPl(teamId, to === '__none' ? null : to, !keepOld)) onClose() },
+      }}
+    >
+      <select value={to} onChange={(e) => setTo(e.target.value)} className={cn(inputCls, 'w-full py-2')} aria-label="新 PL">
+        <option value="">选择新 PL…</option>
+        {same.length > 0 && (
+          <optgroup label="本组成员">
+            {same.map((u) => <option key={u.id} value={u.id}>{u.name} · {u.title || ROLE_LABEL[u.role]}</option>)}
+          </optgroup>
+        )}
+        {others.length > 0 && (
+          <optgroup label="其他团队(将调入本组)">
+            {others.map((u) => <option key={u.id} value={u.id}>{u.name} · {teamName(u.teamId)}</option>)}
+          </optgroup>
+        )}
+        {old && <option value="__none">— 暂不设 PL(撤销 {old.name})—</option>}
+      </select>
+
+      {(cand || to === '__none') && (
+        <ul className="mt-3 space-y-1.5 rounded-md border bg-slate-50/70 px-3.5 py-3 text-[13px] text-slate-600">
+          {cand && leadsOther && (
+            <li className="text-red-600">{cand.name} 目前是「{leadsOther.name}」的 PL,请先为该团队指定新 PL。</li>
+          )}
+          {cand && !leadsOther && cand.teamId !== teamId && (
+            <li>{cand.name} 将从「{teamName(cand.teamId)}」调入「{team.name}」;其名下专利仍留在原团队,可由 PL / GL 另行迁移。</li>
+          )}
+          {cand && !leadsOther && cand.role === 'user' && <li>{cand.name} 的角色将升为 PL(需重新登录后生效)。</li>}
+          {cand && cand.role === 'gl' && <li>{cand.name} 是 GL,保持 GL 角色并兼任本组负责人。</li>}
+          {old && (
+            <li>
+              {oldLeadsOther
+                ? `${old.name} 仍负责其他团队,保留 PL 角色。`
+                : keepOld ? `${old.name} 保留 PL 角色。` : `${old.name} 将降为普通用户(仍在本组)。`}
+            </li>
+          )}
+        </ul>
+      )}
+      {old && !oldLeadsOther && to && (
+        <label className="mt-3 flex items-center gap-2 text-[13px] text-slate-600">
+          <input type="checkbox" checked={keepOld} onChange={(e) => setKeepOld(e.target.checked)} className="accent-teal-700" />
+          保留 {old.name} 的 PL 角色
+        </label>
+      )}
+    </Modal>
+  )
+}
+
+// —— 回调地址:先测试、再保存;测试结果就地展示 ——
+function WebhookField() {
+  const { config, setConfig, testWebhook, me } = useStore()
+  const isGl = me.role === 'gl'
+  const [url, setUrl] = useState(config.webhookUrl)
+  const [testing, setTesting] = useState(false)
+  const [res, setRes] = useState<Awaited<ReturnType<typeof testWebhook>> | null>(null)
+  const dirty = url.trim() !== config.webhookUrl
+  return (
+    <div className="border-t pt-4">
+      <div className="text-sm font-medium">Webhook 回调地址</div>
+      <div className="mt-0.5 text-xs text-muted-foreground">
+        通知事件以 POST + 签名头发送到该地址,由邮件 / IM 适配器转发。修改后建议先测试连通性再保存。
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <input
+          value={url} disabled={!isGl}
+          onChange={(e) => { setUrl(e.target.value); setRes(null) }}
+          placeholder="https://im-bot.corp.local/hook/patentflow"
+          className={cn(inputCls, 'min-w-0 flex-1 font-mono-x text-xs')}
+        />
+        {isGl && (
+          <>
+            <button
+              type="button" disabled={!url.trim() || testing}
+              onClick={async () => {
+                setTesting(true)
+                try { setRes(await testWebhook(url.trim())) } catch (e) { setRes({ ok: false, status: null, latencyMs: 0, error: String(e), url, signed: false }) }
+                setTesting(false)
+              }}
+              className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
+            >
+              {testing ? '测试中…' : '测试连通性'}
+            </button>
+            <button
+              type="button" disabled={!dirty}
+              onClick={() => setConfig({ ...config, webhookUrl: url.trim() })}
+              className="rounded-md bg-[#12141f] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40"
+            >
+              保存
+            </button>
+          </>
+        )}
+      </div>
+      {res && (
+        <div className={cn('mt-2 rounded-md border px-3 py-2 text-xs', res.ok ? 'border-teal-200 bg-teal-50 text-teal-800' : 'border-red-200 bg-red-50 text-red-700')}>
+          {res.ok
+            ? `连通正常:HTTP ${res.status},耗时 ${res.latencyMs} ms${res.signed ? ',已带签名头' : ',未配置签名密钥(webhook_secret)'}。`
+            : `连接失败:${res.error ?? '未知错误'}${res.latencyMs ? `(${res.latencyMs} ms)` : ''}。请检查地址、网络与对方服务。`}
+          {res.ok && dirty && ' 别忘了点「保存」。'}
+        </div>
+      )}
+      {!url.trim() && isGl && <p className="mt-1.5 text-[11px] text-slate-400">未配置时通知只在站内通知中心可见。</p>}
+    </div>
   )
 }
