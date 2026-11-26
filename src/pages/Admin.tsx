@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useStore, teamName } from '@/lib/store'
-import { TEAMS, isConfigAdmin } from '@/lib/data'
+import { TEAMS } from '@/lib/data'
 import {
   NOTIFY_EVENT_LABEL, ROLE_LABEL, STAGES,
   type NotifyEvent, type Role,
@@ -22,7 +22,7 @@ const inputCls =
 export default function Admin() {
   const {
     me, config, setConfig, users, updateMember, addMember,
-    tokens, adminRevokeToken, patents, transitions, versions, kpiRules,
+    tokens, adminRevokeToken,
     cycles, saveCycle, closeCycle, reactivateMember,
   } = useStore()
   const [offboarding, setOffboarding] = useState<string | null>(null)
@@ -30,56 +30,21 @@ export default function Admin() {
   const myTeamUsers = users.filter((u) => me.role === 'gl' || u.teamId === me.teamId)
 
   const [adding, setAdding] = useState(false)
-  const [newbie, setNew] = useState({ name: '', email: '', title: '', teamId: 't1', role: 'user' as Role })
+  const [newbie, setNew] = useState({ name: '', email: '', title: '', teamId: TEAMS[0]?.id ?? '', role: 'user' as Role })
   const [exported, setExported] = useState('')
   const [newCycle, setNewCycle] = useState({ name: '', start: '', end: '' })
 
-  // 导出同样遵守「私有完全透明」:私有专利及其版本/流转不进入导出
-  const exportable = patents.filter((p) => p.visibility !== 'private')
-  const exportIds = new Set(exportable.map((p) => p.id))
-
-  const download = (filename: string, content: string, type: string) => {
-    const blob = new Blob([content], { type })
+  // 导出由后端生成(GL 权限校验;私有专利及其版本/流转不进入导出)
+  const download = (path: string, label: string) => {
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = filename
+    a.href = `/api${path}`
+    a.download = ''
     a.click()
-    URL.revokeObjectURL(a.href)
-    setExported(filename)
+    setExported(label)
     setTimeout(() => setExported(''), 2500)
   }
-
-  const exportJson = () =>
-    download(
-      `patentflow-export-${new Date().toISOString().slice(0, 10)}.json`,
-      JSON.stringify(
-        {
-          exportedAt: new Date().toISOString(), exportedBy: me.id,
-          config, users, patents: exportable,
-          transitions: transitions.filter((t) => exportIds.has(t.patentId)),
-          versions: versions.filter((v) => exportIds.has(v.patentId)),
-          kpiRules,
-        },
-        null,
-        2,
-      ),
-      'application/json',
-    )
-
-  const exportCsv = () => {
-    const esc = (s: string) => `"${s.replaceAll('"', '""')}"`
-    const rows = exportable.map((p) => [
-      p.code, esc(p.title), users.find((u) => u.id === p.ownerId)?.name ?? p.ownerId,
-      teamName(p.teamId), p.visibility, p.stage,
-      p.archived ? (p.archived.kind === 'completed' ? '完成归档' : '放弃归档') : '在研',
-      p.createdAt, p.dueDates[p.stage] ?? '',
-    ].join(','))
-    download(
-      `patentflow-patents-${new Date().toISOString().slice(0, 10)}.csv`,
-      `﻿编号,标题,负责人,团队,可见性,阶段,状态,创建日,当前截止\n${rows.join('\n')}`,
-      'text/csv;charset=utf-8',
-    )
-  }
+  const exportJson = () => download('/export.json', 'JSON 全量导出')
+  const exportCsv = () => download('/export/patents.csv', '专利清单 CSV')
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -141,7 +106,7 @@ export default function Admin() {
             <button
               type="button"
               disabled={!newbie.name.trim() || !newbie.email.trim()}
-              onClick={() => { addMember({ ...newbie, name: newbie.name.trim(), email: newbie.email.trim() }); setAdding(false); setNew({ name: '', email: '', title: '', teamId: 't1', role: 'user' }) }}
+              onClick={() => { addMember({ ...newbie, name: newbie.name.trim(), email: newbie.email.trim() }); setAdding(false); setNew({ name: '', email: '', title: '', teamId: TEAMS[0]?.id ?? '', role: 'user' }) }}
               className="rounded-md bg-teal-700 px-4 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40"
             >
               确认添加
@@ -170,21 +135,13 @@ export default function Admin() {
                     <td className="px-4 py-3">
                       <span className="font-medium">{u.name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">{u.title}</span>
-                      {isConfigAdmin(u.email) && (
-                        <span
-                          className="ml-2 rounded bg-[#12141f] px-1.5 py-px text-[10px] font-medium text-teal-400"
-                          title="由 patentflow.config.yaml 的 admins 指定,只能通过修改配置文件并重启来变更"
-                        >
-                          配置文件管理员
-                        </span>
-                      )}
                     </td>
                     <td className="px-4 py-3">
                       {isGl ? (
                         <select
                           value={u.role}
-                          disabled={isConfigAdmin(u.email)}
-                          title={isConfigAdmin(u.email) ? '配置文件管理员不可在 UI 中降级' : undefined}
+                          disabled={u.id === me.id}
+                          title={u.id === me.id ? '不能降级自己' : undefined}
                           onChange={(e) => updateMember(u.id, { role: e.target.value as Role })}
                           className={cn(inputCls, 'py-1 text-xs')}
                           aria-label={`${u.name} 的角色`}
@@ -251,7 +208,7 @@ export default function Admin() {
                               恢复
                             </button>
                           </span>
-                        ) : u.id !== me.id && !isConfigAdmin(u.email) ? (
+                        ) : u.id !== me.id ? (
                           <button
                             type="button"
                             onClick={() => setOffboarding(u.id)}
@@ -275,7 +232,7 @@ export default function Admin() {
           Reviewer 不是行政角色,不在此表维护 —— 它以「按专利邀请」的方式存在(见 review_assignment)。
           专利转交在专利详情页「更多」或个人中心操作;成员停用时须先完成离职交接。
           成员换组时,其名下专利留在原组,由原组 PL 或 GL 在详情页手动迁移。
-          标记「配置文件管理员」的账号由 patentflow.config.yaml 的 admins 指定,UI 中不可降级。
+          账号异常(忘记密码、唯一 GL 离职或被误降级等)由配置文件中的系统管理员在独立后台 /sysadmin 处理。
         </p>
       </section>
 
@@ -304,9 +261,9 @@ export default function Admin() {
                 ['可专利性审查打分', '被邀请时', '被邀请时', '被邀请时'],
                 ['KPI 规则管理', '—', '本组规则', '全局规则'],
                 ['专利周期 / 逾期策略 / 审查门禁等系统配置', '—', '只读', '可编辑'],
-                ['成员与角色管理 / 停用与离职交接', '—', '本组只读', '可编辑(配置文件管理员除外)'],
+                ['成员与角色管理 / 停用与离职交接', '—', '本组只读', '可编辑(不能降级自己)'],
                 ['跨周期标记 / Token 全局吊销 / 数据导出', '—', '—', '可操作'],
-                ['配置文件管理员指定', '—', '—', '仅 patentflow.config.yaml'],
+                ['账号救援(重置密码 / 恢复账号 / 指定 GL)', '—', '—', '系统管理员(配置文件账号,独立后台)'],
               ] as [string, string, string, string][]).map(([cap, u, pl, gl]) => (
                 <tr key={cap}>
                   <td className="px-4 py-2.5 font-medium">{cap}</td>

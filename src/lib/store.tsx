@@ -64,7 +64,6 @@ interface Bootstrap {
   me: User
   users: User[]
   teams: Team[]
-  configAdmins: string[]
   config: SystemConfig
   patents: Patent[]
   versions: StageVersion[]
@@ -225,7 +224,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     try {
       const b = await api.get<Bootstrap>('/bootstrap')
-      setReferenceData(b.teams, b.configAdmins)
+      setReferenceData(b.teams)
       setBoot(b)
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) setBoot(null)
@@ -234,7 +233,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    // 首次加载:取登录方式与会话数据(异步回调中 setState,非同步级联)
     api.get<Providers>('/auth/providers').then(setProviders).catch(() => {})
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     reload().catch((e) => setError(String(e))).finally(() => setReady(true))
   }, [reload])
 
